@@ -1,0 +1,917 @@
+spec_version: 1
+module_type: plugin
+module_desc: Harness Artifact Registry (push and pull artifacts)
+external_binary: harness-har
+
+nouns:
+  - noun: registry
+    short_desc: A Harness Artifact Registry that stores and proxies packages.
+    multi_level: true
+    url_path: /ng/account/{{auth.account}}/module/har{{harScopeUrl(auth)}}/registries/{{it.identifier}}
+    fields:
+      - id: identifier
+        expr: it.identifier
+      - id: package_type
+        expr: it.packageType
+      - id: type
+        expr: it.config.type
+      - id: description
+        expr: it.description
+      - id: package_url
+        label: Package URL
+        expr: it.url
+      - id: url
+        label: URL
+        expr: url(it)
+      - id: public
+        expr: it.isPublic
+      - id: labels
+        expr: jsonArray(it.labels)
+      - id: allowed_pattern
+        expr: it.allowedPattern
+      - id: blocked_pattern
+        expr: it.blockedPattern
+      - id: created
+        expr: epochMs(it.createdAt)
+      - id: modified
+        expr: epochMs(it.modifiedAt)
+
+  - noun: registry_summary
+    short_desc: Lightweight registry overview including size, as returned by the list endpoint.
+    url_path: /ng/account/{{auth.account}}/module/har{{harScopeUrl(auth)}}/registries/{{it.identifier}}
+    fields:
+      - id: identifier
+        expr: it.identifier
+      - id: package_type
+        expr: it.packageType
+      - id: type
+        expr: it.type
+      - id: size
+        expr: it.registrySize
+      - id: package_url
+        label: Package URL
+        expr: it.url
+      - id: url
+        label: URL
+        expr: url(it)
+
+  - noun: artifact
+    short_desc: A versioned package stored in a Harness artifact registry.
+    multi_level: true
+    fields:
+      - id: name
+        expr: it.imageName
+      - id: package_type
+        expr: it.packageType
+      - id: downloads
+        expr: it.downloadsCount
+      - id: created
+        expr: epochMs(it.createdAt)
+      - id: modified
+        expr: epochMs(it.modifiedAt)
+
+  - noun: artifact_list
+    short_desc: Summary view of artifacts as returned by the registry list endpoint.
+    fields:
+      - id: name
+        expr: it.name
+      - id: package_type
+        expr: it.packageType
+      - id: registry
+        expr: it.registryIdentifier
+      - id: downloads
+        expr: it.downloadsCount
+
+  - noun: artifact_version
+    short_desc: A specific version of an artifact, including scan status and quarantine state.
+    multi_level: true
+    fields:
+      - id: name
+        expr: it.imageName
+      - id: version
+        expr: it.version
+      - id: package_type
+        expr: it.packageType
+      - id: registry_type
+        expr: it.registryType
+      - id: scan_status
+        expr: it.scanStatus
+      - id: quarantined
+        expr: it.isQuarantined
+
+  - noun: artifact_file
+    short_desc: An individual file within an artifact version.
+    multi_level: true
+    fields:
+      - id: name
+        expr: it.name
+      - id: size
+        expr: it.size
+      - id: created
+        expr: it.createdAt
+
+  - noun: artifact_version_list
+    short_desc: Summary view of artifact versions as returned by the list endpoint.
+    fields:
+      - id: version
+        expr: it.name
+      - id: size
+        expr: it.size
+      - id: files
+        expr: it.fileCount
+      - id: downloads
+        expr: it.downloadsCount
+      - id: modified
+        expr: it.lastModified
+
+  - noun: registry_metadata
+    short_desc: Key-value metadata attached to an artifact registry.
+    multi_level: true
+
+  - noun: artifact_metadata
+    short_desc: Key-value metadata attached to an artifact.
+    multi_level: true
+
+  - noun: artifact_version_metadata
+    short_desc: Key-value metadata attached to a specific artifact version.
+    multi_level: true
+
+commands:
+  - command: pull artifact
+    verb: pull
+    noun: artifact
+    short: Pull a generic artifact from a Harness registry
+    has_args: true
+    id_allow_slash: true
+    id_label: "<registry/name>"
+    args_label: "<dest-dir>"
+    completion_seq:
+      - completion_noun: registry
+      - completion_noun: artifact
+    handler_type: workflow
+    workflow_id: pull_artifact
+    flags:
+      - name: version
+        description: "Artifact version (required)"
+        completion_noun: artifact_version
+        parent_from_arg: 0
+      - name: filename
+        description: "Filename to download from the registry (required)"
+      - name: package-type
+        short: t
+        description: "Package type (docker, helm, generic, maven, npm, python, nuget, rpm, cargo, go, conda, dart, composer, swift). Inferred from file extension if not set."
+
+  - command: push artifact:maven
+    verb: push
+    noun: artifact
+    noun_variant: maven
+    short: Push a Maven artifact (.jar/.war) to a Harness registry
+    has_args: true
+    id_allow_slash: true
+    id_label: "<registry/name>"
+    args_label: "<local-jar-or-war>"
+    completion_seq:
+      - completion_noun: registry
+      - completion_noun: artifact
+    handler_type: workflow
+    workflow_id: push_artifact_maven
+    flags:
+      - name: pom-file
+        description: "Path to POM file (required)"
+        required: true
+      - name: max-concurrent-uploads
+        description: "Maximum number of concurrent file uploads (default: 4, use 1 for sequential)"
+
+  - command: push artifact:npm
+    verb: push
+    noun: artifact
+    noun_variant: npm
+    short: Push an npm package (.tgz) to a Harness registry
+    has_args: true
+    id_allow_slash: true
+    id_label: "<registry/name>"
+    args_label: "<local-tgz>"
+    completion_seq:
+      - completion_noun: registry
+      - completion_noun: artifact
+    handler_type: workflow
+    workflow_id: push_artifact_npm
+
+  - command: push artifact:python
+    verb: push
+    noun: artifact
+    noun_variant: python
+    short: Push a Python package (.whl) to a Harness registry
+    has_args: true
+    id_allow_slash: true
+    id_label: "<registry/name>"
+    args_label: "<local-whl>"
+    completion_seq:
+      - completion_noun: registry
+      - completion_noun: artifact
+    handler_type: workflow
+    workflow_id: push_artifact_python
+    flags:
+      - name: max-concurrent-uploads
+        description: "Maximum number of concurrent file uploads (default: 4, use 1 for sequential)"
+
+  - command: push artifact:nuget
+    verb: push
+    noun: artifact
+    noun_variant: nuget
+    short: Push a NuGet package (.nupkg) to a Harness registry
+    has_args: true
+    id_allow_slash: true
+    id_label: "<registry/name>"
+    args_label: "<local-nupkg>"
+    completion_seq:
+      - completion_noun: registry
+      - completion_noun: artifact
+    handler_type: workflow
+    workflow_id: push_artifact_nuget
+
+  - command: push artifact:rpm
+    verb: push
+    noun: artifact
+    noun_variant: rpm
+    short: Push an RPM package to a Harness registry
+    has_args: true
+    id_allow_slash: true
+    id_label: "<registry/name>"
+    args_label: "<local-rpm>"
+    completion_seq:
+      - completion_noun: registry
+      - completion_noun: artifact
+    handler_type: workflow
+    workflow_id: push_artifact_rpm
+
+  - command: push artifact:cargo
+    verb: push
+    noun: artifact
+    noun_variant: cargo
+    short: Push a Cargo crate (.crate) to a Harness registry
+    has_args: true
+    id_allow_slash: true
+    id_label: "<registry/name>"
+    args_label: "<local-crate>"
+    completion_seq:
+      - completion_noun: registry
+      - completion_noun: artifact
+    handler_type: workflow
+    workflow_id: push_artifact_cargo
+
+  - command: push artifact:go
+    verb: push
+    noun: artifact
+    noun_variant: go
+    short: Push a Go module to a Harness registry
+    has_args: true
+    id_allow_slash: true
+    id_label: "<registry/name>"
+    args_label: "<local-zip>"
+    completion_seq:
+      - completion_noun: registry
+      - completion_noun: artifact
+    handler_type: workflow
+    workflow_id: push_artifact_go
+    flags:
+      - name: version
+        description: "Module version (required, e.g. v1.2.3)"
+        required: true
+      - name: mod-file
+        description: "Path to pre-built .mod file (skips local generation when all three go file flags are set)"
+      - name: info-file
+        description: "Path to pre-built .info file (skips local generation when all three go file flags are set)"
+      - name: zip-file
+        description: "Path to pre-built .zip file (skips local generation when all three go file flags are set)"
+
+  - command: push artifact:conda
+    verb: push
+    noun: artifact
+    noun_variant: conda
+    short: Push a Conda package to a Harness registry
+    has_args: true
+    id_allow_slash: true
+    id_label: "<registry/name>"
+    args_label: "<local-conda-pkg>"
+    completion_seq:
+      - completion_noun: registry
+      - completion_noun: artifact
+    handler_type: workflow
+    workflow_id: push_artifact_conda
+
+  - command: push artifact:dart
+    verb: push
+    noun: artifact
+    noun_variant: dart
+    short: Push a Dart package to a Harness registry
+    has_args: true
+    id_allow_slash: true
+    id_label: "<registry/name>"
+    args_label: "<local-dart-pkg>"
+    completion_seq:
+      - completion_noun: registry
+      - completion_noun: artifact
+    handler_type: workflow
+    workflow_id: push_artifact_dart
+
+  - command: push artifact:composer
+    verb: push
+    noun: artifact
+    noun_variant: composer
+    short: Push a Composer package (.zip) to a Harness registry
+    has_args: true
+    id_allow_slash: true
+    id_label: "<registry/name>"
+    args_label: "<local-zip>"
+    completion_seq:
+      - completion_noun: registry
+      - completion_noun: artifact
+    handler_type: workflow
+    workflow_id: push_artifact_composer
+
+  - command: push artifact:swift
+    verb: push
+    noun: artifact
+    noun_variant: swift
+    short: Push a Swift package to a Harness registry
+    has_args: true
+    id_allow_slash: true
+    id_label: "<registry/name>"
+    args_label: "<local-pkg>"
+    completion_seq:
+      - completion_noun: registry
+      - completion_noun: artifact
+    handler_type: workflow
+    workflow_id: push_artifact_swift
+    flags:
+      - name: metadata-path
+        description: "Path to metadata JSON file (optional)"
+
+  - command: push artifact:puppet
+    verb: push
+    noun: artifact
+    noun_variant: puppet
+    short: Push a Puppet module (.tar.gz) to a Harness registry
+    has_args: true
+    id_allow_slash: true
+    id_label: "<registry>"
+    args_label: "<local-module.tar.gz>"
+    completion_seq:
+      - completion_noun: registry
+      - completion_noun: artifact
+    handler_type: workflow
+    workflow_id: push_artifact_puppet
+
+  - command: push artifact:helm
+    verb: push
+    noun: artifact
+    noun_variant: helm
+    short: Push a Helm chart to a Harness registry
+    has_args: true
+    id_allow_slash: true
+    id_label: "<registry/name>"
+    args_label: "<local-chart>"
+    completion_seq:
+      - completion_noun: registry
+      - completion_noun: artifact
+    handler_type: workflow
+    workflow_id: push_artifact_helm
+
+  - command: push artifact:docker
+    verb: push
+    noun: artifact
+    noun_variant: docker
+    short: Push a Docker image to a Harness registry
+    has_args: true
+    id_allow_slash: true
+    id_label: "<registry/name>"
+    args_label: "<local-image>"
+    completion_seq:
+      - completion_noun: registry
+      - completion_noun: artifact
+    handler_type: workflow
+    workflow_id: push_artifact_docker
+
+  - command: delete artifact
+    verb: delete
+    noun: artifact
+    confirm_mode: prompt
+    short: Delete an artifact and all its versions
+    id_label: "<registry/name>"
+    id_parts: 2
+    completion_seq:
+      - completion_noun: registry
+      - completion_noun: artifact
+    flags_builtin:
+      level: true
+    handler_type: endpoint
+    endpoint:
+      method: DELETE
+      path: /har/api/v1/registry/{{auth.scope}}/{{ctx.idParts[0]}}/+/artifact/{{ctx.idParts[1]}}/+
+      item_expr: it
+
+  - command: delete artifact_version
+    verb: delete
+    noun: artifact_version
+    confirm_mode: prompt
+    short: Delete a specific artifact version
+    id_label: "<registry/name/version>"
+    id_parts: 3
+    completion_seq:
+      - completion_noun: registry
+      - completion_noun: artifact
+      - completion_noun: artifact_version
+    flags_builtin:
+      level: true
+    handler_type: endpoint
+    endpoint:
+      method: DELETE
+      path: /har/api/v1/registry/{{auth.scope}}/{{ctx.idParts[0]}}/+/artifact/{{ctx.idParts[1]}}/+/version/{{ctx.idParts[2]}}
+      item_expr: it
+
+  - command: get artifact
+    verb: get
+    noun: artifact
+    short: Get artifact metadata by registry and name
+    id_label: "<registry/name>"
+    id_parts: 2
+    completion_seq:
+      - completion_noun: registry
+      - completion_noun: artifact
+    flags_builtin:
+      level: true
+    handler_type: endpoint
+    endpoint:
+      path: /har/api/v1/registry/{{auth.scope}}/{{ctx.idParts[0]}}/+/artifact/{{ctx.idParts[1]}}/+/summary
+      item_expr: it.data
+
+  - command: get artifact_version
+    verb: get
+    noun: artifact_version
+    short: Get artifact version metadata
+    id_label: "<registry/name/version>"
+    id_parts: 3
+    completion_seq:
+      - completion_noun: registry
+      - completion_noun: artifact
+      - completion_noun: artifact_version
+    flags_builtin:
+      level: true
+      ui: true
+    handler_type: endpoint
+    endpoint:
+      path: /har/api/v1/registry/{{auth.scope}}/{{ctx.idParts[0]}}/+/artifact/{{ctx.idParts[1]}}/+/version/{{ctx.idParts[2]}}/summary
+      item_expr: it.data
+
+  - command: list artifact_file
+    verb: list
+    noun: artifact_file
+    short: List files in a specific artifact version
+    requires_parentid: true
+    parentid_label: "<registry/name/version>"
+    id_parts: 3
+    completion_seq:
+      - completion_noun: registry
+      - completion_noun: artifact
+      - completion_noun: artifact_version
+    flags_builtin:
+      level: true
+    handler_type: endpoint
+    endpoint:
+      path: /har/api/v1/registry/{{auth.scope}}/{{ctx.parentIdParts[0]}}/+/artifact/{{ctx.parentIdParts[1]}}/+/version/{{ctx.parentIdParts[2]}}/files
+      items_expr: it.data.files
+      get_id_expr: parentId + "/" + it.name
+      columns: [name, size, created]
+      paging:
+        paging_strategy: page_index
+        countable: true
+        page_index_param: page
+        page_size_param: size
+        page_size_default: 20
+        page_size_max: 100
+        total_expr: it.data.itemCount
+
+  - command: list artifact_version
+    verb: list
+    noun: artifact_version
+    fields_noun: artifact_version_list
+    short: List versions of an artifact
+    requires_parentid: true
+    parentid_label: "<registry/name>"
+    id_parts: 2
+    completion_seq:
+      - completion_noun: registry
+      - completion_noun: artifact
+    flags_builtin:
+      level: true
+    handler_type: endpoint
+    flags:
+      - name: search
+        description: Filter versions by name
+    endpoint:
+      path: /har/api/v1/registry/{{auth.scope}}/{{ctx.parentIdParts[0]}}/+/artifact/{{ctx.parentIdParts[1]}}/+/versions
+      items_expr: it.data.artifactVersions
+      get_id_expr: parentId + "/" + it.name
+      completion:
+        id_expr: it.name
+        name_expr: it.name
+      query_params:
+        search_term: flags.search
+      columns: [version, size, files, downloads, modified]
+      paging:
+        paging_strategy: page_index
+        countable: true
+        page_index_param: page
+        page_size_param: size
+        page_size_default: 20
+        page_size_max: 100
+        total_expr: it.data.itemCount
+
+  - command: list artifact
+    verb: list
+    noun: artifact
+    fields_noun: artifact_list
+    short: List artifacts in a registry
+    completion_noun: registry
+    parentid_label: "<registry>"
+    flags_builtin:
+      level: true
+    handler_type: endpoint
+    flags:
+      - name: search
+        description: Filter artifacts by name or keyword
+    endpoint:
+      path: /har/api/v1/spaces/{{auth.scope}}/+/artifacts
+      items_expr: it.data.artifacts
+      get_id_expr: it.registryIdentifier + "/" + it.name
+      completion:
+        id_expr: it.name
+        name_expr: it.name
+      query_params:
+        reg_identifier: ctx.parentId
+        search_term: flags.search
+      columns: [name, package_type, registry, downloads]
+      paging:
+        paging_strategy: page_index
+        countable: true
+        page_index_param: page
+        page_size_param: size
+        page_size_default: 20
+        page_size_max: 100
+        total_expr: it.data.itemCount
+
+  - command: list registry
+    verb: list
+    noun: registry
+    fields_noun: registry_summary
+    short: List artifact registries in a project
+    flags_builtin:
+      level: true
+    handler_type: endpoint
+    flags:
+      - name: search
+        description: Filter registries by name or keyword
+      - name: type
+        description: Registry type filter (UPSTREAM, VIRTUAL)
+      - name: package-type
+        description: Filter by package type (DOCKER, HELM, NPM, MAVEN, PYTHON, ...)
+    endpoint:
+      path: /har/api/v1/spaces/{{auth.scope}}/+/registries
+      items_expr: it.data.registries
+      get_id_expr: it.identifier
+      completion:
+        id_expr: it.identifier
+        name_expr: it.identifier
+      query_params:
+        search_term: flags.search
+        type: flags.type
+        package_type: flags["package-type"]
+      columns: [identifier, package_type, type, size, url]
+      paging:
+        paging_strategy: page_index
+        countable: true
+        page_index_param: page
+        page_size_param: size
+        page_size_default: 20
+        page_size_max: 100
+        total_expr: it.data.itemCount
+
+  - command: create registry
+    verb: create
+    noun: registry
+    short: Create a new artifact registry
+    requires_id: true
+    flags_builtin:
+      level: true
+    handler_type: endpoint
+    flags:
+      - name: description
+        description: Registry description
+      - name: package-type
+        default: DOCKER
+        description: "Package type (DOCKER, HELM, GENERIC, MAVEN, NPM, PYTHON, NUGET, RPM, CARGO, GO, CONDA, DART, COMPOSER, SWIFT)"
+      - name: type
+        default: VIRTUAL
+        description: "Registry type (VIRTUAL, UPSTREAM)"
+      - name: labels
+        description: Labels (comma-separated list or JSON array)
+        is_array: true
+    endpoint:
+      method: POST
+      path: /har/api/v1/registry
+      query_params:
+        space_ref: auth.scope
+      body_params:
+        identifier: ctx.id
+        parentRef: auth.scope
+        description: flags.description
+        packageType: flags["package-type"]
+        config.type: coalesce(flags.type, "VIRTUAL")
+        labels: flags.labels
+      item_expr: it.data
+
+  - command: delete registry
+    verb: delete
+    noun: registry
+    confirm_mode: confirm_id
+    short: Delete an artifact registry by identifier
+    completion_noun: registry
+    flags_builtin:
+      level: true
+    handler_type: endpoint
+    endpoint:
+      method: DELETE
+      path: /har/api/v1/registry/{{auth.scope}}/{{ctx.id}}/+
+      item_expr: it
+
+  - command: get registry
+    verb: get
+    noun: registry
+    short: Get an artifact registry by identifier
+    flags_builtin:
+      level: true
+    handler_type: endpoint
+    endpoint:
+      path: /har/api/v1/registry/{{auth.scope}}/{{ctx.id}}/+
+      item_expr: it.data
+
+  - command: get registry_metadata
+    verb: get
+    noun: registry_metadata
+    short: Get metadata for an artifact registry
+    completion_noun: registry
+    flags_builtin:
+      level: true
+    handler_type: endpoint
+    endpoint:
+      path: /har/api/v2/metadata
+      query_params:
+        account_identifier: auth.account
+        registry_identifier: "ctx.id"
+      item_expr: it.data.metadata
+      text_formatter: core:metadata-text
+
+  - command: update registry_metadata
+    verb: update
+    noun: registry_metadata
+    short: Update metadata on an artifact registry (--set key=value, --del key)
+    requires_id: true
+    completion_noun: registry
+    flags_builtin:
+      set: true
+      del: true
+      level: true
+    handler_type: endpoint
+    endpoint:
+      method: PUT
+      path: /har/api/v2/metadata
+      update_strategy: get-then-put-kv
+      get_query_params:
+        account_identifier: auth.account
+        registry_identifier: "ctx.id"
+      query_params:
+        account_identifier: auth.account
+      body_params:
+        registryIdentifier: ctx.id
+      update_body_wrap: metadata
+      item_expr: it.data.metadata
+      text_formatter: core:metadata-text
+
+  - command: get artifact_metadata
+    verb: get
+    noun: artifact_metadata
+    short: Get metadata for an artifact
+    id_label: "<registry/name>"
+    id_parts: 2
+    completion_seq:
+      - completion_noun: registry
+      - completion_noun: artifact
+    flags_builtin:
+      level: true
+    handler_type: endpoint
+    endpoint:
+      path: /har/api/v2/metadata
+      query_params:
+        account_identifier: auth.account
+        registry_identifier: "ctx.idParts[0]"
+        package: "ctx.idParts[1]"
+      item_expr: it.data.metadata
+      text_formatter: core:metadata-text
+
+  - command: update artifact_metadata
+    verb: update
+    noun: artifact_metadata
+    short: Update metadata on an artifact (--set key=value, --del key)
+    id_label: "<registry/name>"
+    id_parts: 2
+    completion_seq:
+      - completion_noun: registry
+      - completion_noun: artifact
+    flags_builtin:
+      set: true
+      del: true
+      level: true
+    handler_type: endpoint
+    endpoint:
+      method: PUT
+      path: /har/api/v2/metadata
+      update_strategy: get-then-put-kv
+      get_query_params:
+        account_identifier: auth.account
+        registry_identifier: "ctx.idParts[0]"
+        package: "ctx.idParts[1]"
+      query_params:
+        account_identifier: auth.account
+      body_params:
+        registryIdentifier: ctx.idParts[0]
+        package: ctx.idParts[1]
+      update_body_wrap: metadata
+      item_expr: it.data.metadata
+      text_formatter: core:metadata-text
+
+  - command: get artifact_version_metadata
+    verb: get
+    noun: artifact_version_metadata
+    short: Get metadata for an artifact version
+    id_label: "<registry/name/version>"
+    id_parts: 3
+    completion_seq:
+      - completion_noun: registry
+      - completion_noun: artifact
+      - completion_noun: artifact_version
+    flags_builtin:
+      level: true
+    handler_type: endpoint
+    endpoint:
+      path: /har/api/v2/metadata
+      query_params:
+        account_identifier: auth.account
+        registry_identifier: "ctx.idParts[0]"
+        package: "ctx.idParts[1]"
+        version: "ctx.idParts[2]"
+      item_expr: it.data.metadata
+      text_formatter: core:metadata-text
+
+  - command: update artifact_version_metadata
+    verb: update
+    noun: artifact_version_metadata
+    short: Update metadata on an artifact version (--set key=value, --del key)
+    id_label: "<registry/name/version>"
+    id_parts: 3
+    completion_seq:
+      - completion_noun: registry
+      - completion_noun: artifact
+      - completion_noun: artifact_version
+    flags_builtin:
+      set: true
+      del: true
+      level: true
+    handler_type: endpoint
+    endpoint:
+      method: PUT
+      path: /har/api/v2/metadata
+      update_strategy: get-then-put-kv
+      get_query_params:
+        account_identifier: auth.account
+        registry_identifier: "ctx.idParts[0]"
+        package: "ctx.idParts[1]"
+        version: "ctx.idParts[2]"
+      query_params:
+        account_identifier: auth.account
+      body_params:
+        registryIdentifier: ctx.idParts[0]
+        package: ctx.idParts[1]
+        version: ctx.idParts[2]
+      update_body_wrap: metadata
+      item_expr: it.data.metadata
+      text_formatter: core:metadata-text
+
+  - command: execute artifact_version:copy
+    verb: execute
+    noun: artifact_version
+    noun_variant: copy
+    short: Copy a specific artifact version to another registry
+    id_label: "<src-registry/artifact/version>"
+    id_parts: 3
+    completion_seq:
+      - completion_noun: registry
+      - completion_noun: artifact
+      - completion_noun: artifact_version
+    flags_builtin:
+      level: true
+    handler_type: endpoint
+    endpoint:
+      method: POST
+      path: /har/api/v2/copy
+      query_params:
+        src_registry_identifier: ctx.idParts[0]
+        src_artifact: ctx.idParts[1]
+        src_version: ctx.idParts[2]
+        target_registry_identifier: flags["dest-registry"]
+        artifact_type: flags["artifact-type"]
+      item_expr: it
+    flags:
+      - name: dest-registry
+        description: "Target registry to copy the artifact version into"
+        required: true
+        completion_noun: registry
+      - name: artifact-type
+        description: "Artifact type for Hugging Face artifacts (model or dataset)"
+        completion_values: [model, dataset]
+
+  - command: execute artifact_version:firewall_scan
+    verb: execute
+    noun: artifact_version
+    noun_variant: firewall_scan
+    short: Evaluate firewall policy for a specific artifact version
+    id_label: "<registry/name/version>"
+    id_parts: 3
+    completion_seq:
+      - completion_noun: registry
+      - completion_noun: artifact
+      - completion_noun: artifact_version
+    flags_builtin:
+      level: true
+    handler_type: workflow
+    workflow_id: execute_artifact_firewall_scan
+
+  - command: execute registry:firewall_scan
+    verb: execute
+    noun: registry
+    noun_variant: firewall_scan
+    short: Audit lock file dependencies against firewall policies for a registry
+    id_label: "<registry>"
+    completion_noun: registry
+    flags_builtin:
+      level: true
+    handler_type: workflow
+    workflow_id: execute_registry_firewall_scan
+    flags:
+      - name: file
+        short: f
+        description: "Path to lock file (package-lock.json, pnpm-lock.yaml, yarn.lock, requirements.txt, pyproject.toml, Pipfile.lock, poetry.lock, pom.xml, build.gradle)"
+        required: true
+
+  - command: execute registry:migrate
+    verb: execute
+    noun: registry
+    noun_variant: migrate
+    short: Migrate artifacts from a source registry into Harness using a config file
+    no_id: true
+    flags_builtin:
+      level: true
+    handler_type: workflow
+    workflow_id: execute_registry_migrate
+    flags:
+      - name: file
+        short: f
+        description: "Path to migration config YAML"
+        required: true
+      - name: concurrency
+        description: "Number of concurrent transfer workers (overrides config)"
+      - name: overwrite
+        description: "Overwrite existing artifacts"
+        is_bool: true
+      - name: dry-run
+        description: "Dry run — discover files without uploading, write report to ./dry-run-output/"
+        is_bool: true
+
+  - command: configure registry
+    verb: configure
+    noun: registry
+    short: Configure a local package manager client to use a Harness registry
+    id_label: "<registry>"
+    completion_noun: registry
+    handler_type: workflow
+    workflow_id: configure_registry
+    flags:
+      - name: client
+        description: "Package manager client to configure (npm)"
+        required: true
+        completion_values: [npm]
+      - name: scope
+        description: "npm scope, e.g. @myorg (optional; configures default registry if omitted)"
+      - name: global
+        description: "Write config to ~/.npmrc (default: ./.npmrc in current directory)"
+        is_bool: true

@@ -1,0 +1,289 @@
+spec_version: 1
+module_type: builtin
+module_desc: Core CLI commands (auth, install, version)
+
+nouns:
+  - noun: profiles
+    short_desc: An authentication profile with credentials and scope.
+    fields:
+      - id: profile
+        expr: it["profile"]
+      - id: api_url
+        label: API URL
+        expr: it["api_url"]
+      - id: account_id
+        label: Account ID
+        expr: it["account_id"]
+      - id: org_id
+        label: Org ID
+        expr: it["org_id"]
+      - id: project_id
+        label: Project ID
+        expr: it["project_id"]
+
+  - noun: module
+    short_desc: A CLI module grouping related nouns and commands.
+    fields:
+      - id: module
+        expr: it["module"]
+      - id: type
+        expr: it["type"]
+      - id: installed
+        expr: it["installed"]
+      - id: version
+        expr: it["version"]
+      - id: desc
+        label: Description
+        expr: it["desc"]
+
+  - noun: noun
+    short_desc: A CLI noun (resource type) with its supported verbs and module.
+    fields:
+      - id: noun
+        expr: it["noun"]
+      - id: module
+        expr: it["module"]
+      - id: multi_level
+        label: multi-level
+        expr: it["multi_level"]
+      - id: verbs
+        expr: it["verbs"]
+
+commands:
+  - command: auth login
+    verb: auth
+    noun: login
+    short: Save credentials to a profile
+    no_auth: true
+    handler_type: workflow
+    workflow_id: login
+    flags:
+      - name: api-url
+        description: 'Harness API base URL (default "https://app.harness.io")'
+      - name: api-token
+        description: API token (reads from stdin if omitted)
+      - name: account
+        description: Account ID (inferred from PAT; must match token if provided)
+      - name: org
+        description: Default org ID to store in profile
+      - name: project
+        description: Default project ID to store in profile
+      - name: overwrite
+        is_bool: true
+        description: Overwrite existing profile without prompting
+      - name: no-overwrite
+        is_bool: true
+        description: Error if profile already exists
+      - name: no-validate
+        is_bool: true
+        description: Skip token validation against the API
+
+  - command: auth setscope
+    verb: auth
+    noun: setscope
+    short: Set the default org and/or project on a profile
+    no_auth: true
+    handler_type: workflow
+    workflow_id: set
+    flags:
+      - name: org
+        description: Default org identifier to store in profile
+      - name: project
+        description: Default project identifier to store in profile
+
+  - command: auth logout
+    verb: auth
+    noun: logout
+    short: Remove a profile
+    no_auth: true
+    handler_type: workflow
+    workflow_id: logout
+    flags: []
+
+  - command: auth profiles
+    verb: auth
+    noun: profiles
+    short: List all authentication profiles
+    no_auth: true
+    verb_handler: list
+    handler_type: endpoint
+    flags:
+      - name: search
+        description: Filter profiles by substring match on profile name
+    endpoint:
+      fetch_fn: profiles_fetch
+      items_expr: it
+      get_id_expr: "-"
+      paging:
+        paging_strategy: flat_list
+      columns: [profile, api_url, account_id, org_id, project_id]
+
+  - command: auth status
+    verb: auth
+    noun: status
+    short: Show current auth profile and validate credentials
+    no_auth: true
+    handler_type: workflow
+    workflow_id: status
+    flags: []
+
+  - command: auth env
+    verb: auth
+    noun: env
+    short: Print env vars for the current auth context
+    no_auth: true
+    handler_type: workflow
+    workflow_id: env
+    flags:
+      - name: export
+        is_bool: true
+        description: Prefix each line with "export "
+
+  - command: auth token
+    verb: auth
+    noun: token
+    short: Print the active API token
+    no_auth: true
+    handler_type: workflow
+    workflow_id: token
+    flags: []
+
+  - command: version
+    verb: version
+    short: Print the harness CLI version
+    no_auth: true
+    handler_type: workflow
+    workflow_id: version
+
+  - command: install cli
+    verb: install
+    noun: cli
+    short: Install or upgrade the Harness CLI binary
+    long: |
+      Install or upgrade the Harness CLI binary.
+
+      Version is optional and defaults to "latest". You may also pass "latest" explicitly.
+      If the resolved version is already installed, the command exits without installing
+      unless --force is passed.
+
+      Examples:
+        harness install cli                          # install latest
+        harness install cli --version v1.2.3         # install a specific version
+        harness install cli --force                  # reinstall even if already up to date
+    no_auth: true
+    handler_type: workflow
+    workflow_id: install_cli
+    no_id: true
+    flags:
+      - name: version
+        description: "Version to install (default: latest)"
+      - name: install-dir
+        description: "Directory to install into (default: ~/.local/bin)"
+      - name: force
+        is_bool: true
+        description: Install even if the current version is already up to date
+      - name: check
+        is_bool: true
+        description: Check the version without installing (prints resolved version, exits 1 if not found)
+
+  - command: install module
+    verb: install
+    noun: module
+    short: Install a Harness CLI module
+    long: |
+      Install a Harness CLI module binary from the GitHub release.
+
+      Currently supported modules: har
+
+      Version defaults to "latest". Use --force to reinstall even if already up to date.
+
+      Examples:
+        harness install module har                       # install latest har module
+        harness install module har --version v1.2.3     # install a specific version
+        harness install module har --force               # reinstall even if up to date
+        harness install module har --check               # check version without installing
+    no_auth: true
+    handler_type: workflow
+    workflow_id: install_module
+    id_label: name
+    flags:
+      - name: version
+        description: "Version to install (default: latest)"
+      - name: install-dir
+        description: "Directory to install into (default: ~/.local/bin)"
+      - name: force
+        is_bool: true
+        description: Install even if the current version is already up to date
+      - name: check
+        is_bool: true
+        description: Check the version without installing (prints resolved version, exits 1 if not found)
+
+  - command: list module
+    verb: list
+    noun: module
+    short: List all loaded CLI modules
+    no_auth: true
+    handler_type: endpoint
+    flags:
+      - name: module-type
+        description: Filter by module type
+        completion_values: [builtin, plugin]
+    endpoint:
+      fetch_fn: list_modules_fetch
+      items_expr: it
+      get_id_expr: it["module"]
+      paging:
+        paging_strategy: flat_list
+      columns: [module, type, installed, version, desc]
+
+  - command: get module
+    verb: get
+    noun: module
+    short: Show domain model and nouns for a module
+    no_auth: true
+    id_label: name
+    handler_type: workflow
+    workflow_id: get_module
+    flags:
+      - name: matrix
+        is_bool: true
+        description: Show noun/verb support matrix
+
+  - command: get noun
+    verb: get
+    noun: noun
+    short: Show fields and commands for a noun
+    no_auth: true
+    id_label: "<noun>"
+    handler_type: workflow
+    workflow_id: get_noun
+
+  - command: list noun
+    verb: list
+    noun: noun
+    short: List all registered nouns with their module and supported verbs
+    no_auth: true
+    handler_type: endpoint
+    flags:
+      - name: module
+        description: Filter by module name
+      - name: search
+        description: Filter nouns by substring match on noun or module name
+      - name: matrix
+        is_bool: true
+        description: Display as a noun × verb matrix with checkmarks
+    endpoint:
+      fetch_fn: list_nouns_fetch
+      items_expr: it
+      get_id_expr: it["noun"]
+      paging:
+        paging_strategy: flat_list
+      columns: [noun, module, multi_level, verbs]
+
+  - command: debug miscfg
+    verb: debug
+    noun: miscfg
+    short: Trigger a misconfigured command
+    dev_only: true
+    handler_type: workflow
+    workflow_id: debug.nonexistent

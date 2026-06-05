@@ -1,0 +1,74 @@
+// Copyright © 2026 Harness Inc.
+// SPDX-License-Identifier: Apache-2.0
+
+package pipeline
+
+import (
+	_ "embed"
+	"fmt"
+	"io"
+
+	"github.com/harness/harness-cli/pkg/cmdctx"
+	"github.com/harness/harness-cli/pkg/execgraph"
+	"github.com/harness/harness-cli/pkg/format"
+	"github.com/harness/harness-cli/pkg/registry"
+)
+
+//go:embed pipeline.help.txt
+var helpText string
+
+// ModuleInit registers pipeline workflows and formatters. Commands are declared in pipeline.spec.yaml.
+func ModuleInit(reg registry.ModuleRegistrar) {
+	reg.SetHelpText(helpText)
+	reg.RegisterFetchFn(listExecutionLogsFetchFnID, listExecutionLogsFetchFn)
+	reg.RegisterWorkflow(getPipelineLogHandlerID, getPipelineLogHandler)
+	reg.RegisterBodyFn(executePipelineBodyFnID, executePipelineBody)
+	reg.RegisterBodyFn(executeInputSetBodyFnID, executeInputSetBody)
+	reg.RegisterFollowFn(executeFollowFnID, executeFollowFn)
+	reg.RegisterTextFormatter("execution_detail", formatGetExecution)
+	reg.RegisterFetchFn(listExecutionStepsFetchFnID, listExecutionStepsFetchFn)
+	reg.RegisterFlagCompletionFn(pipelineLogStageCompletionID, pipelineLogStageCompletion)
+	reg.RegisterFlagCompletionFn(pipelineLogStepCompletionID, pipelineLogStepCompletion)
+}
+
+func formatGetExecution(w io.Writer, d cmdctx.DataAccessor) error {
+	s := "it.pipelineExecutionSummary"
+	status := d.GetString(s + ".status")
+	failureMsg := d.GetString(s + ".failureInfo.message")
+
+	format.WriteLabeledValues(w, []format.LabeledValue{
+		{Label: "ExecutionId", Value: d.GetString(s + ".planExecutionId")},
+		{Label: "Pipeline", Value: d.GetString(s + ".pipelineIdentifier")},
+		{Label: "Name", Value: d.GetString(s + ".name")},
+		{Label: "Run #", Value: fmt.Sprintf("%d", d.GetInt64(s+".runSequence"))},
+		{Label: "Status", Value: status},
+		{Label: "Trigger", Value: d.GetString(s + ".executionTriggerInfo.triggerType")},
+		{Label: "TriggeredBy", Value: d.GetString(s + ".executionTriggerInfo.triggeredBy.identifier")},
+		{Label: "Started", Value: d.GetTs(s + ".startTs")},
+		{Label: "Ended", Value: d.GetTs(s + ".endTs")},
+		{Label: "Stages", Value: fmt.Sprintf("%d total, %d success, %d failed",
+			d.GetInt64(s+".totalStagesCount"),
+			d.GetInt64(s+".successfulStagesCount"),
+			d.GetInt64(s+".failedStagesCount"),
+		)},
+	})
+	if failureMsg != "" {
+		fmt.Fprintf(w, "\nError:  %s\n", failureMsg)
+	}
+
+	if g, err := reUnmarshal[executionGraphEnvelope](d.GetData()); err == nil && g.ExecutionGraph.RootNodeID != "" {
+		fmt.Fprintf(w, "\n")
+		printExecutionTree(w, g.ExecutionGraph)
+	}
+
+	if u := d.GetString("url(it)"); u != "" {
+		fmt.Fprintf(w, "\n%s\n", u)
+	}
+	fmt.Fprintf(w, "\n")
+	return nil
+}
+
+type executionGraphEnvelope struct {
+	ExecutionGraph execgraph.ExecutionGraph `json:"executionGraph"`
+}
+

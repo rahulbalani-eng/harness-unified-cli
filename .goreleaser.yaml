@@ -1,0 +1,78 @@
+version: 2
+
+project_name: harness
+
+before:
+  hooks:
+    - task tidy
+
+builds:
+  - id: harness-core
+    main: ./cmd/harness/main-harness.go
+    binary: harness
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X github.com/harness/harness-cli/pkg/hbase.Version={{.Version}}
+      - -X github.com/harness/harness-cli/pkg/hbase.BuildTime={{.Date}}
+
+  - id: harness-plugin-har
+    main: ./modules/har/cmd/harness-har/main-harness-har.go
+    binary: harness-har
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X github.com/harness/harness-cli/pkg/hbase.Version={{.Version}}
+      - -X github.com/harness/harness-cli/pkg/hbase.BuildTime={{.Date}}
+
+archives:
+  - id: harness-bundle
+    ids: [harness-core, harness-plugin-har]
+    formats: [tar.gz]
+    name_template: "harness-bundle_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+
+  - id: harness-core
+    ids: [harness-core]
+    formats: [tar.gz]
+    name_template: "harness-core_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+
+  - id: harness-plugin-har
+    ids: [harness-plugin-har]
+    formats: [tar.gz]
+    name_template: "harness-plugin-har_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+
+checksum:
+  name_template: "{{ .ProjectName }}_{{ .Version }}_checksums.txt"
+  algorithm: sha256
+
+snapshot:
+  version_template: "{{ .Tag }}-next"
+
+changelog:
+  disable: true
+
+release:
+  github:
+    owner: harness
+    name: harness-unified-cli
+  draft: false
+  prerelease: auto
+  header: "Harness Unified CLI {{ .Tag }}"

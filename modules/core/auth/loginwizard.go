@@ -1,0 +1,979 @@
+// Copyright © 2026 Harness Inc.
+// SPDX-License-Identifier: Apache-2.0
+
+package auth
+
+import (
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"sort"
+	"strings"
+	"time"
+
+	"charm.land/bubbles/v2/list"
+	"charm.land/bubbles/v2/spinner"
+	"charm.land/bubbles/v2/textinput"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
+
+	pkgauth "github.com/harness/harness-cli/pkg/auth"
+	"github.com/harness/harness-cli/pkg/cmdctx"
+)
+
+// WizardResult is returned by RunLoginWizard on success.
+type WizardResult struct {
+	APIURL  string
+	Token   string
+	Account string
+	RegURL  string
+	OrgID   string
+	Project string
+}
+
+// WizardExisting carries values from an already-saved profile so the wizard
+// can offer "use existing" options instead of requiring re-entry.
+type WizardExisting struct {
+	APIURL string
+	Token  string
+}
+
+type wizardStep int
+
+const (
+	stepURL wizardStep = iota
+	stepToken
+	stepValidating
+	stepOrgLoad
+	stepOrgPick
+	stepProjectLoad
+	stepProjectPick
+	stepDone
+)
+
+const defaultAPIURL = "https://app.harness.io"
+
+// urlOpt represents one entry in the URL picker.
+type urlOpt struct {
+	label string
+	value string // "" means "enter custom"
+}
+
+// --- styles ---
+
+type wizardStyles struct {
+	title, subtle, errStyle, selected, prompt, box lipgloss.Style
+}
+
+func newWizardStyles() wizardStyles {
+	return wizardStyles{
+		title:    lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("99")),
+		subtle:   lipgloss.NewStyle().Foreground(lipgloss.Color("240")),
+		errStyle: lipgloss.NewStyle().Foreground(lipgloss.Color("196")),
+		selected: lipgloss.NewStyle().Foreground(lipgloss.Color("86")).Bold(true),
+		prompt:   lipgloss.NewStyle().Foreground(lipgloss.Color("99")),
+		box:      lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("238")).Padding(0, 1),
+	}
+}
+
+// --- list item ---
+
+type orgItem struct{ id, name string }
+
+func (o orgItem) Title() string       { return o.name }
+func (o orgItem) Description() string { return o.id }
+func (o orgItem) FilterValue() string { return o.name + " " + o.id }
+
+// --- messages ---
+
+type validateDoneMsg struct {
+	apiURL    string
+	accountID string
+	regURL    string
+	err       error
+}
+
+type orgsDoneMsg struct {
+	orgs []orgItem
+	err  error
+}
+
+type projectsDoneMsg struct {
+	projects []orgItem
+	err      error
+}
+
+// --- model ---
+
+type wizardModel struct {
+	st   wizardStyles
+	step wizardStep
+
+	urlInput   textinput.Model
+	tokenInput textinput.Model
+	spin       spinner.Model
+	orgList    list.Model
+	projList   list.Model
+
+	// URL step state
+	urlOpts     []urlOpt
+	urlPickIdx  int
+	urlInCustom bool // true = text input active
+
+	// Token step state
+	existingToken    string
+	tokenHasExisting bool
+	tokenPickIdx     int
+	tokenInCustom    bool // true = text input active (or no existing token)
+
+	apiURL    string
+	token     string
+	accountID string
+	regURL    string
+	orgID     string
+	projectID string
+
+	// pre-selected values (for set-wizard mode)
+	currentOrgID     string
+	currentProjectID string
+	setMode          bool // started at org pick; no URL/token steps
+
+	cmdCtx    *cmdctx.Ctx
+	err       string
+	cancelled bool
+	width     int
+	height    int
+}
+
+func buildURLOpts(existingAPIURL string) (opts []urlOpt, defaultIdx int) {
+	opts = []urlOpt{
+		{label: "app.harness.io  (default)", value: defaultAPIURL},
+	}
+	defaultIdx = 0
+	if existingAPIURL != "" && existingAPIURL != defaultAPIURL {
+		opts = append(opts, urlOpt{
+			label: existingAPIURL + "  (existing)",
+			value: existingAPIURL,
+		})
+		defaultIdx = len(opts) - 1 // pre-select the existing URL
+	}
+	opts = append(opts, urlOpt{label: "Enter custom URL...", value: ""})
+	return opts, defaultIdx
+}
+
+func newWizardModel(existing *WizardExisting) wizardModel {
+	url := textinput.New()
+	url.Placeholder = defaultAPIURL
+	url.SetWidth(50)
+
+	tok := textinput.New()
+	tok.Placeholder = "pat.xxxxxxxx.xxxxxxxx.xxxxxxxx"
+	tok.EchoMode = textinput.EchoPassword
+	tok.EchoCharacter = '•'
+	tok.SetWidth(60)
+
+	st := newWizardStyles()
+
+	sp := spinner.New()
+	sp.Spinner = spinner.Dot
+	sp.Style = st.prompt
+
+	newList := func(title string) list.Model {
+		delegate := list.NewDefaultDelegate()
+		delegate.ShowDescription = false
+		delegate.SetHeight(1)
+		delegate.SetSpacing(0)
+		delegate.Styles.SelectedTitle = delegate.Styles.SelectedTitle.Foreground(lipgloss.Color("86")).BorderLeftForeground(lipgloss.Color("86"))
+		l := list.New(nil, delegate, 60, 20)
+		l.Title = title
+		l.Styles.Title = st.title
+		l.SetShowStatusBar(false)
+		l.SetFilteringEnabled(true)
+		return l
+	}
+
+	var existingAPIURL, existingToken string
+	if existing != nil {
+		existingAPIURL = existing.APIURL
+		existingToken = existing.Token
+	}
+
+	urlOpts, urlPickIdx := buildURLOpts(existingAPIURL)
+
+	tokenHasExisting := existingToken != ""
+	tokenInCustom := !tokenHasExisting // go straight to text input if no existing token
+
+	if tokenInCustom {
+		tok.Focus()
+	}
+
+	return wizardModel{
+		st:         st,
+		step:       stepURL,
+		urlInput:   url,
+		tokenInput: tok,
+		spin:       sp,
+		orgList:    newList("Select an organization"),
+		projList:   newList("Select a project"),
+
+		urlOpts:    urlOpts,
+		urlPickIdx: urlPickIdx,
+
+		existingToken:    existingToken,
+		tokenHasExisting: tokenHasExisting,
+		tokenInCustom:    tokenInCustom,
+
+		width:  80,
+		height: 24,
+	}
+}
+
+func (m wizardModel) Init() tea.Cmd {
+	if m.setMode {
+		return tea.Batch(func() tea.Msg { return m.spin.Tick() }, m.fetchOrgs())
+	}
+	return nil
+}
+
+func (m wizardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+
+	case tea.WindowSizeMsg:
+		m.width = msg.Width
+		m.height = msg.Height
+		listH := msg.Height - 10
+		listH = max(listH, 6)
+		m.orgList.SetSize(msg.Width-4, listH)
+		m.projList.SetSize(msg.Width-4, listH)
+		return m, nil
+
+	case tea.KeyPressMsg:
+		switch msg.String() {
+		case "ctrl+c":
+			m.cancelled = true
+			return m, tea.Quit
+
+		case "up":
+			switch m.step {
+			case stepURL:
+				if !m.urlInCustom && m.urlPickIdx > 0 {
+					m.urlPickIdx--
+					return m, nil
+				}
+			case stepToken:
+				if m.tokenHasExisting && !m.tokenInCustom && m.tokenPickIdx > 0 {
+					m.tokenPickIdx--
+					return m, nil
+				}
+			}
+
+		case "down":
+			switch m.step {
+			case stepURL:
+				if !m.urlInCustom && m.urlPickIdx < len(m.urlOpts)-1 {
+					m.urlPickIdx++
+					return m, nil
+				}
+			case stepToken:
+				if m.tokenHasExisting && !m.tokenInCustom && m.tokenPickIdx < 1 {
+					m.tokenPickIdx++
+					return m, nil
+				}
+			}
+
+		case "esc":
+			switch m.step {
+			case stepURL:
+				if m.urlInCustom {
+					m.urlInCustom = false
+					m.urlInput.Blur()
+					m.err = ""
+					return m, nil
+				}
+				m.cancelled = true
+				return m, tea.Quit
+			case stepToken:
+				if m.tokenInCustom && m.tokenHasExisting {
+					m.tokenInCustom = false
+					m.tokenInput.Blur()
+					m.err = ""
+					return m, nil
+				}
+				// go back to URL step (picker mode)
+				m.step = stepURL
+				m.urlInCustom = false
+				m.urlInput.Blur()
+				m.tokenInput.Blur()
+				m.err = ""
+				return m, nil
+			case stepOrgPick:
+				if m.setMode {
+					m.cancelled = true
+					return m, tea.Quit
+				}
+				m.step = stepToken
+				m.tokenInCustom = true
+				m.tokenInput.Focus()
+				m.err = ""
+				return m, textinput.Blink
+			case stepProjectPick:
+				m.step = stepOrgPick
+				m.err = ""
+				return m, nil
+			default:
+				m.cancelled = true
+				return m, tea.Quit
+			}
+
+		case "enter":
+			return m.handleEnter()
+		}
+
+	case validateDoneMsg:
+		if msg.err != nil {
+			m.step = stepToken
+			m.tokenInCustom = true
+			m.tokenInput.Focus()
+			m.err = msg.err.Error()
+			return m, textinput.Blink
+		}
+		m.apiURL = msg.apiURL
+		m.accountID = msg.accountID
+		m.regURL = msg.regURL
+		m.err = ""
+		m.step = stepOrgLoad
+		return m, tea.Batch(func() tea.Msg { return m.spin.Tick() }, m.fetchOrgs())
+
+	case orgsDoneMsg:
+		if msg.err != nil {
+			if m.setMode {
+				m.err = msg.err.Error()
+				m.cancelled = true
+				return m, tea.Quit
+			}
+			m.step = stepToken
+			m.tokenInCustom = true
+			m.tokenInput.Focus()
+			m.err = msg.err.Error()
+			return m, textinput.Blink
+		}
+		items := make([]list.Item, len(msg.orgs))
+		for i, o := range msg.orgs {
+			items[i] = o
+		}
+		m.orgList.SetItems(items)
+		if m.currentOrgID != "" {
+			for i, o := range msg.orgs {
+				if o.id == m.currentOrgID {
+					m.orgList.Select(i)
+					break
+				}
+			}
+		}
+		m.step = stepOrgPick
+		return m, nil
+
+	case projectsDoneMsg:
+		if msg.err != nil {
+			m.step = stepOrgPick
+			m.err = msg.err.Error()
+			return m, nil
+		}
+		items := make([]list.Item, len(msg.projects))
+		for i, p := range msg.projects {
+			items[i] = p
+		}
+		m.projList.SetItems(items)
+		if m.currentProjectID != "" {
+			for i, p := range msg.projects {
+				if p.id == m.currentProjectID {
+					m.projList.Select(i)
+					break
+				}
+			}
+		}
+		m.step = stepProjectPick
+		return m, nil
+	}
+
+	// delegate to active sub-component
+	switch m.step {
+	case stepURL:
+		if m.urlInCustom {
+			var cmd tea.Cmd
+			m.urlInput, cmd = m.urlInput.Update(msg)
+			return m, cmd
+		}
+	case stepToken:
+		if m.tokenInCustom {
+			var cmd tea.Cmd
+			m.tokenInput, cmd = m.tokenInput.Update(msg)
+			return m, cmd
+		}
+	case stepValidating, stepOrgLoad, stepProjectLoad:
+		var cmd tea.Cmd
+		m.spin, cmd = m.spin.Update(msg)
+		return m, cmd
+	case stepOrgPick:
+		var cmd tea.Cmd
+		m.orgList, cmd = m.orgList.Update(msg)
+		return m, cmd
+	case stepProjectPick:
+		var cmd tea.Cmd
+		m.projList, cmd = m.projList.Update(msg)
+		return m, cmd
+	}
+
+	return m, nil
+}
+
+func (m wizardModel) handleEnter() (tea.Model, tea.Cmd) {
+	switch m.step {
+	case stepURL:
+		if !m.urlInCustom {
+			opt := m.urlOpts[m.urlPickIdx]
+			if opt.value == "" {
+				// "Enter custom URL..." selected
+				m.urlInCustom = true
+				m.urlInput.Focus()
+				m.err = ""
+				return m, textinput.Blink
+			}
+			m.apiURL = opt.value
+			m.step = stepToken
+			m.err = ""
+			if !m.tokenHasExisting {
+				m.tokenInCustom = true
+				m.tokenInput.Focus()
+				return m, textinput.Blink
+			}
+			return m, nil
+		}
+		// custom text input
+		val := strings.TrimSpace(m.urlInput.Value())
+		if val == "" {
+			val = m.urlInput.Placeholder
+		}
+		m.apiURL = val
+		m.urlInput.Blur()
+		m.step = stepToken
+		m.err = ""
+		if !m.tokenHasExisting {
+			m.tokenInCustom = true
+			m.tokenInput.Focus()
+			return m, textinput.Blink
+		}
+		return m, nil
+
+	case stepToken:
+		if m.tokenHasExisting && !m.tokenInCustom {
+			if m.tokenPickIdx == 0 {
+				// use existing token
+				m.token = m.existingToken
+				m.step = stepValidating
+				m.err = ""
+				return m, tea.Batch(func() tea.Msg { return m.spin.Tick() }, m.doValidate())
+			}
+			// "Enter new token..." selected
+			m.tokenInCustom = true
+			m.tokenInput.Focus()
+			m.err = ""
+			return m, textinput.Blink
+		}
+		// text input
+		tok := strings.TrimSpace(m.tokenInput.Value())
+		if tok == "" {
+			m.err = "token is required"
+			return m, nil
+		}
+		m.token = tok
+		m.tokenInput.Blur()
+		m.step = stepValidating
+		m.err = ""
+		return m, tea.Batch(func() tea.Msg { return m.spin.Tick() }, m.doValidate())
+
+	case stepOrgPick:
+		if m.orgList.FilterState() == list.Filtering {
+			var cmd tea.Cmd
+			m.orgList, cmd = m.orgList.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+			return m, cmd
+		}
+		sel, ok := m.orgList.SelectedItem().(orgItem)
+		if !ok {
+			return m, nil
+		}
+		m.orgID = sel.id
+		m.step = stepProjectLoad
+		return m, tea.Batch(func() tea.Msg { return m.spin.Tick() }, m.fetchProjects())
+
+	case stepProjectPick:
+		if m.projList.FilterState() == list.Filtering {
+			var cmd tea.Cmd
+			m.projList, cmd = m.projList.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+			return m, cmd
+		}
+		sel, ok := m.projList.SelectedItem().(orgItem)
+		if !ok {
+			return m, nil
+		}
+		m.projectID = sel.id
+		m.step = stepDone
+		return m, tea.Quit
+	}
+	return m, nil
+}
+
+func renderPicker(b *strings.Builder, st wizardStyles, opts []string, selectedIdx int) {
+	for i, label := range opts {
+		if i == selectedIdx {
+			b.WriteString(st.selected.Render("  > "+label) + "\n")
+		} else {
+			b.WriteString(st.subtle.Render("    "+label) + "\n")
+		}
+	}
+}
+
+func (m wizardModel) View() tea.View {
+	var b strings.Builder
+
+	st := m.st
+	b.WriteString(st.title.Render("  Harness Login") + "\n\n")
+
+	switch m.step {
+	case stepURL:
+		b.WriteString(st.prompt.Render("API URL") + "\n")
+		if !m.urlInCustom {
+			labels := make([]string, len(m.urlOpts))
+			for i, o := range m.urlOpts {
+				labels[i] = o.label
+			}
+			renderPicker(&b, st, labels, m.urlPickIdx)
+			b.WriteString(st.subtle.Render("  ↑/↓ to move · enter to select · esc to cancel") + "\n")
+		} else {
+			b.WriteString(m.urlInput.View() + "\n")
+			b.WriteString(st.subtle.Render("  press enter to continue, esc to go back") + "\n")
+		}
+
+	case stepToken:
+		b.WriteString(st.selected.Render("✓ ") + st.subtle.Render("API URL: "+m.apiURL) + "\n\n")
+		b.WriteString(st.prompt.Render("Harness PAT") + "\n")
+		if m.tokenHasExisting && !m.tokenInCustom {
+			tokenLabels := []string{
+				"Use existing  (" + maskedToken(m.existingToken) + ")",
+				"Enter new token...",
+			}
+			renderPicker(&b, st, tokenLabels, m.tokenPickIdx)
+			b.WriteString(st.subtle.Render("  ↑/↓ to move · enter to select · esc to go back") + "\n")
+		} else {
+			b.WriteString(m.tokenInput.View() + "\n")
+			b.WriteString(st.subtle.Render("  press enter to continue, esc to go back") + "\n")
+		}
+
+	case stepValidating:
+		b.WriteString(st.selected.Render("✓ ") + st.subtle.Render("API URL: "+m.apiURL) + "\n")
+		b.WriteString(st.selected.Render("✓ ") + st.subtle.Render("Token: "+masked(m.token)) + "\n\n")
+		b.WriteString(m.spin.View() + " Validating credentials…\n")
+
+	case stepOrgLoad, stepOrgPick, stepProjectLoad:
+		if !m.setMode {
+			b.WriteString(st.selected.Render("✓ ") + st.subtle.Render("API URL: "+m.apiURL) + "\n")
+			b.WriteString(st.selected.Render("✓ ") + st.subtle.Render("Token: "+masked(m.token)) + "\n\n")
+		}
+		if m.step == stepOrgLoad {
+			b.WriteString(m.spin.View() + " Loading organizations…\n")
+		} else if m.step == stepProjectLoad {
+			b.WriteString(st.selected.Render("✓ ") + st.subtle.Render("Org: "+m.orgID) + "\n\n")
+			b.WriteString(m.spin.View() + " Loading projects…\n")
+		} else {
+			b.WriteString(st.box.Render(m.orgList.View()) + "\n")
+			escHint := "esc to go back"
+			if m.setMode {
+				escHint = "esc to cancel"
+			}
+			b.WriteString(st.subtle.Render("  / to filter · enter to select · "+escHint) + "\n")
+		}
+
+	case stepProjectPick:
+		if !m.setMode {
+			b.WriteString(st.selected.Render("✓ ") + st.subtle.Render("API URL: "+m.apiURL) + "\n")
+			b.WriteString(st.selected.Render("✓ ") + st.subtle.Render("Token: "+masked(m.token)) + "\n")
+		}
+		b.WriteString(st.selected.Render("✓ ") + st.subtle.Render("Org: "+m.orgID) + "\n\n")
+		b.WriteString(st.box.Render(m.projList.View()) + "\n")
+		b.WriteString(st.subtle.Render("  / to filter · enter to select · esc to change org") + "\n")
+	}
+
+	if m.err != "" {
+		b.WriteString("\n" + st.errStyle.Render("  ✗ "+m.err) + "\n")
+	}
+
+	v := tea.NewView(b.String())
+	v.AltScreen = true
+	return v
+}
+
+// --- async commands ---
+
+func (m wizardModel) doValidate() tea.Cmd {
+	apiURL := m.apiURL
+	token := m.token
+	return func() tea.Msg {
+		accountID, regURL, err := validateAndFetch(apiURL, token)
+		return validateDoneMsg{apiURL: apiURL, accountID: accountID, regURL: regURL, err: err}
+	}
+}
+
+func (m wizardModel) fetchOrgs() tea.Cmd {
+	cmdCtx := m.cmdCtx
+	apiURL := m.apiURL
+	token := m.token
+	accountID := m.accountID
+	return func() tea.Msg {
+		orgs, err := fetchOrgItems(cmdCtx, apiURL, token, accountID)
+		return orgsDoneMsg{orgs: orgs, err: err}
+	}
+}
+
+func (m wizardModel) fetchProjects() tea.Cmd {
+	cmdCtx := m.cmdCtx
+	apiURL := m.apiURL
+	token := m.token
+	accountID := m.accountID
+	orgID := m.orgID
+	return func() tea.Msg {
+		projects, err := fetchProjectItems(cmdCtx, apiURL, token, accountID, orgID)
+		return projectsDoneMsg{projects: projects, err: err}
+	}
+}
+
+// --- API helpers ---
+
+// fetchOrgItems fetches all organizations via the framework's FetchItems, falling back
+// to a direct HTTP call when no resolver is available (e.g. during login before auth exists).
+func fetchOrgItems(ctx *cmdctx.Ctx, apiURL, token, accountID string) ([]orgItem, error) {
+	if ctx.Resolver != nil {
+		cs := ctx.Resolver.GetSpec("list", "organization")
+		if cs != nil && cs.Endpoint != nil && cs.Endpoint.Paging != nil {
+			fetchCtx := *ctx
+			fetchCtx.Verb = "list"
+			fetchCtx.Noun = "organization"
+			fetchCtx.Auth = &pkgauth.ResolvedAuth{
+				APIUrl:    apiURL,
+				Token:     token,
+				AccountID: accountID,
+			}
+			items, err := ctx.Resolver.FetchItems(&fetchCtx, cs.Endpoint, cmdctx.PagingFlags{All: true})
+			if err != nil {
+				return nil, fmt.Errorf("fetching organizations: %w", err)
+			}
+			return orgItemsFromRaw(items, "it.organization.identifier", "it.organization.name")
+		}
+	}
+	return fetchOrgsHTTP(apiURL, token, accountID)
+}
+
+// fetchProjectItems fetches all projects for the given org via the framework's FetchItems,
+// falling back to direct HTTP when no resolver is available.
+func fetchProjectItems(ctx *cmdctx.Ctx, apiURL, token, accountID, orgID string) ([]orgItem, error) {
+	if ctx.Resolver != nil {
+		cs := ctx.Resolver.GetSpec("list", "project")
+		if cs != nil && cs.Endpoint != nil && cs.Endpoint.Paging != nil {
+			fetchCtx := *ctx
+			fetchCtx.Verb = "list"
+			fetchCtx.Noun = "project"
+			fetchCtx.Auth = &pkgauth.ResolvedAuth{
+				APIUrl:    apiURL,
+				Token:     token,
+				AccountID: accountID,
+				OrgID:     orgID,
+			}
+			items, err := ctx.Resolver.FetchItems(&fetchCtx, cs.Endpoint, cmdctx.PagingFlags{All: true})
+			if err != nil {
+				return nil, fmt.Errorf("fetching projects: %w", err)
+			}
+			return orgItemsFromRaw(items, "it.project.identifier", "it.project.name")
+		}
+	}
+	return fetchProjectsHTTP(apiURL, token, accountID, orgID)
+}
+
+// orgItemsFromRaw maps raw FetchItems results to []orgItem using the completion exprs
+// from the spec as a guide for which fields hold id and name.
+func orgItemsFromRaw(items []any, idPath, namePath string) ([]orgItem, error) {
+	out := make([]orgItem, 0, len(items))
+	for _, raw := range items {
+		m, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		id := deepGet(m, idPath)
+		name := deepGet(m, namePath)
+		if id == "" {
+			continue
+		}
+		if name == "" {
+			name = id
+		}
+		out = append(out, orgItem{id: id, name: name})
+	}
+	sort.Slice(out, func(i, j int) bool { return strings.ToLower(out[i].name) < strings.ToLower(out[j].name) })
+	return out, nil
+}
+
+// deepGet extracts a nested value from a map using a dot-path like "it.organization.identifier".
+// Strips a leading "it." prefix if present.
+func deepGet(m map[string]any, path string) string {
+	path = strings.TrimPrefix(path, "it.")
+	parts := strings.Split(path, ".")
+	var cur any = m
+	for _, p := range parts {
+		cm, ok := cur.(map[string]any)
+		if !ok {
+			return ""
+		}
+		cur = cm[p]
+	}
+	if cur == nil {
+		return ""
+	}
+	return fmt.Sprint(cur)
+}
+
+func validateAndFetch(apiURL, token string) (accountID, regURL string, err error) {
+	accountID = accountIDFromToken(token)
+	if accountID == "" {
+		return "", "", fmt.Errorf("token does not look like a Harness PAT (expected pat.<accountID>.<...>)")
+	}
+
+	c := &http.Client{Timeout: 10 * time.Second}
+
+	// validate token
+	url := fmt.Sprintf("%s/ng/api/accounts/%s?accountIdentifier=%s", apiURL, accountID, accountID)
+	req, _ := http.NewRequest("GET", url, nil)
+	req.Header.Set("x-api-key", token)
+	resp, rerr := c.Do(req)
+	if rerr != nil {
+		return "", "", fmt.Errorf("cannot reach %s: %w", apiURL, rerr)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	switch resp.StatusCode {
+	case 200:
+	case 401:
+		return "", "", fmt.Errorf("token rejected (401) — check your PAT")
+	case 403:
+		return "", "", fmt.Errorf("access denied (403) — check account ID or RBAC")
+	default:
+		return "", "", fmt.Errorf("validation failed (%d): %s", resp.StatusCode, truncate(string(body), 120))
+	}
+
+	// fetch registry URL (best-effort)
+	regURL, _ = fetchRegistryURL(apiURL, token, accountID)
+	return accountID, regURL, nil
+}
+
+func accountIDFromToken(token string) string {
+	parts := strings.SplitN(token, ".", 4)
+	if len(parts) == 4 && parts[0] == "pat" {
+		return parts[1]
+	}
+	return ""
+}
+
+// fetchOrgsHTTP is the raw HTTP fallback used when no resolver is available.
+type orgRespHTTP struct {
+	Data struct {
+		Content []struct {
+			Organization struct {
+				Identifier string `json:"identifier"`
+				Name       string `json:"name"`
+			} `json:"organization"`
+		} `json:"content"`
+	} `json:"data"`
+}
+
+func fetchOrgsHTTP(apiURL, token, accountID string) ([]orgItem, error) {
+	c := &http.Client{Timeout: 15 * time.Second}
+	url := fmt.Sprintf("%s/ng/api/organizations?accountIdentifier=%s&pageSize=200", apiURL, accountID)
+	req, _ := http.NewRequest("GET", url, nil)
+	req.Header.Set("x-api-key", token)
+	resp, err := c.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("fetching organizations: %w", err)
+	}
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("organizations API error (%d)", resp.StatusCode)
+	}
+	var parsed orgRespHTTP
+	if err := json.Unmarshal(b, &parsed); err != nil {
+		return nil, fmt.Errorf("decoding organizations: %w", err)
+	}
+	out := make([]orgItem, 0, len(parsed.Data.Content))
+	for _, row := range parsed.Data.Content {
+		out = append(out, orgItem{id: row.Organization.Identifier, name: row.Organization.Name})
+	}
+	sort.Slice(out, func(i, j int) bool { return strings.ToLower(out[i].name) < strings.ToLower(out[j].name) })
+	return out, nil
+}
+
+type projectRespHTTP struct {
+	Data struct {
+		Content []struct {
+			Project struct {
+				Identifier string `json:"identifier"`
+				Name       string `json:"name"`
+			} `json:"project"`
+		} `json:"content"`
+	} `json:"data"`
+}
+
+func fetchProjectsHTTP(apiURL, token, accountID, orgID string) ([]orgItem, error) {
+	c := &http.Client{Timeout: 15 * time.Second}
+	url := fmt.Sprintf("%s/ng/api/projects?accountIdentifier=%s&orgIdentifier=%s&pageSize=200", apiURL, accountID, orgID)
+	req, _ := http.NewRequest("GET", url, nil)
+	req.Header.Set("x-api-key", token)
+	resp, err := c.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("fetching projects: %w", err)
+	}
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("projects API error (%d)", resp.StatusCode)
+	}
+	var parsed projectRespHTTP
+	if err := json.Unmarshal(b, &parsed); err != nil {
+		return nil, fmt.Errorf("decoding projects: %w", err)
+	}
+	out := make([]orgItem, 0, len(parsed.Data.Content))
+	for _, row := range parsed.Data.Content {
+		out = append(out, orgItem{id: row.Project.Identifier, name: row.Project.Name})
+	}
+	sort.Slice(out, func(i, j int) bool { return strings.ToLower(out[i].name) < strings.ToLower(out[j].name) })
+	return out, nil
+}
+
+// --- RunLoginWizard / RunSetWizard ---
+
+// RunLoginWizard runs the interactive TUI and returns the collected values.
+// Pass existing profile values so the wizard can offer "use existing" options.
+// Returns (nil, nil) if the user cancelled.
+func RunLoginWizard(ctx *cmdctx.Ctx, existing *WizardExisting) (*WizardResult, error) {
+	m := newWizardModel(existing)
+	m.cmdCtx = ctx
+	p := tea.NewProgram(m)
+	final, err := p.Run()
+	if err != nil {
+		return nil, err
+	}
+	fm := final.(wizardModel)
+	if fm.cancelled || fm.step != stepDone {
+		return nil, nil
+	}
+	return &WizardResult{
+		APIURL:  fm.apiURL,
+		Token:   fm.token,
+		Account: fm.accountID,
+		RegURL:  fm.regURL,
+		OrgID:   fm.orgID,
+		Project: fm.projectID,
+	}, nil
+}
+
+// SetWizardInput carries the pre-filled credentials and current defaults for RunSetWizard.
+type SetWizardInput struct {
+	APIURL    string
+	Token     string
+	AccountID string
+	RegURL    string
+	OrgID     string
+	ProjectID string
+}
+
+// RunSetWizard starts the wizard at the org-pick step using already-validated credentials.
+// Pre-selects the currently saved org and project. Returns (nil, nil) if cancelled.
+func RunSetWizard(ctx *cmdctx.Ctx, in *SetWizardInput) (*WizardResult, error) {
+	st := newWizardStyles()
+	sp := spinner.New()
+	sp.Spinner = spinner.Dot
+	sp.Style = st.prompt
+
+	newList := func(title string) list.Model {
+		delegate := list.NewDefaultDelegate()
+		delegate.ShowDescription = false
+		delegate.SetHeight(1)
+		delegate.SetSpacing(0)
+		delegate.Styles.SelectedTitle = delegate.Styles.SelectedTitle.Foreground(lipgloss.Color("86")).BorderLeftForeground(lipgloss.Color("86"))
+		l := list.New(nil, delegate, 60, 20)
+		l.Title = title
+		l.Styles.Title = st.title
+		l.SetShowStatusBar(false)
+		l.SetFilteringEnabled(true)
+		return l
+	}
+
+	m := wizardModel{
+		st:               st,
+		step:             stepOrgLoad,
+		spin:             sp,
+		orgList:          newList("Select an organization"),
+		projList:         newList("Select a project"),
+		apiURL:           in.APIURL,
+		token:            in.Token,
+		accountID:        in.AccountID,
+		regURL:           in.RegURL,
+		currentOrgID:     in.OrgID,
+		currentProjectID: in.ProjectID,
+		setMode:          true,
+		cmdCtx:           ctx,
+		width:            80,
+		height:           24,
+	}
+
+	p := tea.NewProgram(m)
+	final, err := p.Run()
+	if err != nil {
+		return nil, err
+	}
+	fm := final.(wizardModel)
+	if fm.cancelled || fm.step != stepDone {
+		return nil, nil
+	}
+	return &WizardResult{
+		APIURL:  fm.apiURL,
+		Token:   fm.token,
+		Account: fm.accountID,
+		RegURL:  fm.regURL,
+		OrgID:   fm.orgID,
+		Project: fm.projectID,
+	}, nil
+}
+
+// --- helpers ---
+
+func masked(s string) string {
+	if len(s) <= 8 {
+		return strings.Repeat("•", len(s))
+	}
+	return s[:4] + strings.Repeat("•", len(s)-8) + s[len(s)-4:]
+}
+
+// maskedToken shows pat.<accountID> in the clear and masks the remaining segments.
+// Falls back to masked() for non-PAT tokens.
+func maskedToken(s string) string {
+	parts := strings.SplitN(s, ".", 4)
+	if len(parts) == 4 && parts[0] == "pat" {
+		return "pat." + parts[1] + "." + strings.Repeat("•", len(parts[2])) + "." + strings.Repeat("•", len(parts[3]))
+	}
+	return masked(s)
+}
+
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "…"
+}

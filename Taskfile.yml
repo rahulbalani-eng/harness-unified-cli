@@ -1,0 +1,76 @@
+version: "3"
+
+vars:
+  BINARY: harness
+  MAIN: ./cmd/harness/main-harness.go
+  VERSION:
+    sh: echo "${VERSION:-0.1.0-dev}"
+  BUILD_TIME:
+    sh: date -u +%Y%m%d%H%MZ
+  LDFLAGS: >-
+    -X github.com/harness/harness-cli/pkg/hbase.Version={{.VERSION}}
+    -X github.com/harness/harness-cli/pkg/hbase.BuildTime={{.BUILD_TIME}}
+
+tasks:
+  build:
+    desc: Build all binaries
+    deps: [build:main, build:har]
+
+  build:main:
+    desc: Build the harness binary
+    cmds:
+      - go build -ldflags "{{.LDFLAGS}}" -o bin/{{.BINARY}} {{.MAIN}}
+
+  build:har:
+    desc: Build the harness-har binary (HAR external module)
+    dir: modules/har
+    cmds:
+      - go build -ldflags "{{.LDFLAGS}}" -o ../../bin/harness-har ./cmd/harness-har/main-harness-har.go
+
+  build:opt:
+    desc: Build all optimized binaries (stripped symbols, no DWARF)
+    deps: [build:opt:main, build:opt:har]
+
+  build:opt:main:
+    desc: Build optimized harness binary
+    cmds:
+      - go build -trimpath -ldflags "{{.LDFLAGS}} -s -w" -o bin/{{.BINARY}} {{.MAIN}}
+      - |
+        echo "harness size: $(du -sh bin/{{.BINARY}} | cut -f1)"
+
+  build:opt:har:
+    desc: Build optimized harness-har binary
+    dir: modules/har
+    cmds:
+      - go build -trimpath -ldflags "{{.LDFLAGS}} -s -w" -o ../../bin/harness-har ./cmd/harness-har/main-harness-har.go
+      - |
+        echo "harness-har size: $(du -sh ../../bin/harness-har | cut -f1)"
+
+  dev:
+    desc: Run without ldflags (version shows 0.1.0-dev / dev)
+    cmds:
+      - go run {{.MAIN}} {{.CLI_ARGS}}
+
+  check:specs:
+    desc: Validate all *.spec.yaml files
+    deps: [build:main, build:har]
+    cmds:
+      - HARNESS_CHECKSPECS=1 ./bin/harness
+      - HARNESS_CHECKSPECS=1 ./bin/harness-har
+
+  tidy:
+    desc: Tidy all modules and sync go.work
+    cmds:
+      - go mod tidy
+      - sh -c "cd modules/har && go mod tidy"
+      - go work sync
+
+  release:simple:
+    desc: Publish a release to GitHub (skips dirty check, no release notes)
+    cmds:
+      - goreleaser release --clean --release-notes /dev/null
+
+  clean:
+    desc: Remove built binaries
+    cmds:
+      - rm -rf bin/

@@ -1,0 +1,1038 @@
+spec_version: 1
+module_type: builtin
+module_desc: Core platform resources (orgs, projects, users, connectors, delegates)
+
+nouns:
+  - noun: account
+    short_desc: The top-level Harness account entity with billing, auth, and cluster configuration.
+    fields:
+      - id: identifier
+        expr: it.identifier
+      - id: name
+        expr: it.name
+      - id: company
+        expr: it.companyName
+      - id: type
+        expr: it.accountType
+      - id: status
+        expr: it.accountStatus
+      - id: edition
+        expr: it.edition
+      - id: auth
+        expr: it.authenticationMechanism
+      - id: default_experience
+        expr: it.defaultExperience
+      - id: cluster
+        expr: it.cluster
+      - id: ring
+        expr: it.ringName
+      - id: subdomain_url
+        label: Subdomain URL
+        expr: it.subdomainURL
+      - id: product_led
+        expr: it.productLed
+      - id: public_access
+        expr: it.publicAccessEnabled
+      - id: oauth_enabled
+        expr: it.oauthEnabled
+      - id: 2fa_enforced
+        label: 2FA Enforced
+        expr: it.twoFactorAdminEnforced
+      - id: cross_gen_access
+        expr: it.crossGenerationAccessEnabled
+      - id: harness_support_access
+        expr: it.harnessSupportAccessAllowed
+      - id: session_timeout_mins
+        expr: it.sessionTimeoutInMinutes
+      - id: abs_session_timeout_mins
+        expr: it.absoluteSessionTimeoutInMinutes
+      - id: created_at
+        expr: epochMs(it.createdAt)
+        field_type: ts
+      - id: expiry
+        expr: epochMs(it.expiryTime)
+        field_type: ts
+
+  - noun: organization
+    short_desc: A top-level organizational unit that groups projects within an account.
+    fields:
+      - id: identifier
+        expr: it.identifier
+      - id: name
+        path: it.name
+      - id: description
+        path: it.description
+      - id: tags
+        path: it.tags
+        format_expr: formatTagDisplay(it.tags)
+        field_type: tags
+
+  - noun: project
+    short_desc: A scoped workspace within an org where pipelines, connectors, and secrets live.
+    multi_level: true
+    url_path: /ng/account/{{auth.account}}/all/orgs/{{it.project.orgIdentifier}}/projects/{{it.project.identifier}}/overview
+    fields:
+      - id: identifier
+        expr: it.project.identifier
+      - id: name
+        path: it.project.name
+      - id: org
+        expr: it.project.orgIdentifier
+      - id: description
+        path: it.project.description
+      - id: color
+        path: it.project.color
+      - id: tags
+        path: it.project.tags
+        format_expr: formatTagDisplay(it.project.tags)
+        field_type: tags
+      - id: modules
+        path: it.project.modules
+        format_expr: jsonArray(it.project.modules)
+        field_type: set
+      - id: created_at
+        expr: epochMs(it.createdAt)
+        field_type: ts
+      - id: updated_at
+        expr: epochMs(it.lastModifiedAt)
+        field_type: ts
+      - id: favorite
+        expr: it.isFavorite)
+      - id: last_moved_at
+        expr: epochMs(it.lastMovedAt)
+        field_type: ts
+      - id: url
+        label: URL
+        expr: url(it)
+
+  - noun: user
+    short_desc: A Harness user account with roles, 2FA state, and lock/disable status.
+    multi_level: true
+    fields:
+      - id: uuid
+        label: UUID
+        expr: it.user.uuid
+      - id: name
+        expr: it.user.name
+      - id: email
+        expr: it.user.email
+      - id: roles
+        expr: formatRoleAssignments(it.roleAssignmentMetadata)
+      - id: role_ids
+        label: Role IDs
+        expr: formatRoleIds(it.roleAssignmentMetadata)
+      - id: disabled
+        expr: it.user.disabled)
+      - id: locked
+        expr: it.user.locked)
+      - id: 2fa
+        label: 2FA
+        expr: it.user.twoFactorAuthenticationEnabled)
+      - id: externally_managed
+        expr: it.user.externallyManaged)
+
+  - noun: user_group
+    short_desc: A named group of users used to assign roles and SSO mappings in bulk.
+    multi_level: true
+    fields:
+      - id: identifier
+        expr: it.identifier
+      - id: name
+        path: it.name
+      - id: description
+        path: it.description
+      - id: tags
+        path: it.tags
+        format_expr: formatTagDisplay(it.tags)
+        field_type: tags
+      - id: users
+        path: it.users
+        format_expr: jsonArray(it.users)
+        field_type: set
+      - id: org
+        expr: it.orgIdentifier
+      - id: project
+        expr: it.projectIdentifier
+      - id: sso_linked
+        expr: it.ssoLinked
+      - id: externally_managed
+        expr: it.externallyManaged
+      - id: harness_managed
+        expr: it.harnessManaged
+
+  - noun: service_account
+    short_desc: A non-human identity used by applications or pipelines to authenticate with Harness.
+    multi_level: true
+    fields:
+      - id: identifier
+        expr: it.identifier
+      - id: name
+        expr: it.name
+      - id: email
+        expr: it.email
+      - id: description
+        expr: it.description
+      - id: tags
+        path: it.tags
+        format_expr: formatTagDisplay(it.tags)
+        field_type: tags
+      - id: org_id
+        expr: it.orgIdentifier
+      - id: project_id
+        expr: it.projectIdentifier
+
+  - noun: role
+    short_desc: A named set of permissions that can be assigned to users or groups.
+    multi_level: true
+    fields:
+      - id: identifier
+        expr: it.role.identifier
+      - id: name
+        path: it.role.name
+      - id: description
+        path: it.role.description
+      - id: scopes
+        path: it.role.allowedScopeLevels
+        format_expr: jsonArray(it.role.allowedScopeLevels)
+        field_type: set
+      - id: permissions
+        path: it.role.permissions
+        format_expr: jsonArray(it.role.permissions)
+        field_type: set
+      - id: harness_managed
+        expr: it.harnessManaged
+      - id: created_at
+        expr: epochMs(it.createdAt)
+        field_type: ts
+      - id: updated_at
+        expr: epochMs(it.lastModifiedAt)
+        field_type: ts
+
+  - noun: role_assignment
+    short_desc: A binding that grants a role and resource group to a principal (user, group, or service account).
+    multi_level: true
+    fields:
+      - id: identifier
+        expr: it.roleAssignment.identifier
+      - id: role
+        expr: it.roleAssignment.roleIdentifier
+      - id: resource_group
+        expr: it.roleAssignment.resourceGroupIdentifier
+      - id: principal
+        expr: it.roleAssignment.principal.identifier
+      - id: principal_type
+        expr: it.roleAssignment.principal.type
+      - id: disabled
+        expr: it.roleAssignment.disabled
+      - id: managed
+        expr: it.roleAssignment.managed
+      - id: harness_managed
+        expr: it.harnessManaged
+      - id: created_at
+        expr: epochMs(it.createdAt)
+        field_type: ts
+      - id: updated_at
+        expr: epochMs(it.lastModifiedAt)
+        field_type: ts
+
+  - noun: resource_group
+    short_desc: A collection of resources (pipelines, connectors, etc.) that scopes a role assignment.
+    multi_level: true
+    fields:
+      - id: identifier
+        expr: it.resourceGroup.identifier
+      - id: name
+        expr: it.resourceGroup.name
+      - id: description
+        expr: it.resourceGroup.description
+      - id: harness_managed
+        expr: it.harnessManaged
+      - id: allowed_scope_levels
+        expr: jsonArray(it.resourceGroup.allowedScopeLevels)
+      - id: created_at
+        expr: epochMs(it.createdAt)
+        field_type: ts
+      - id: updated_at
+        expr: epochMs(it.lastModifiedAt)
+        field_type: ts
+
+  - noun: permission
+    short_desc: A granular action allowed on a resource type, used to build roles.
+    fields:
+      - id: identifier
+        expr: it.permission.identifier
+      - id: name
+        expr: it.permission.name
+      - id: resource_type
+        expr: it.permission.resourceType
+      - id: action
+        expr: it.permission.action
+      - id: status
+        expr: it.permission.status
+      - id: include_in_all_roles
+        expr: it.permission.includeInAllRoles
+      - id: allowed_scope_levels
+        expr: jsonArray(it.permission.allowedScopeLevels)
+
+  - noun: setting
+    short_desc: A configurable platform option with a value, type, and inheritance scope.
+    multi_level: true
+    fields:
+      - id: identifier
+        expr: it.setting.identifier
+      - id: name
+        expr: it.setting.name
+      - id: value
+        expr: it.setting.value
+      - id: default
+        expr: it.setting.defaultValue
+      - id: source
+        expr: it.setting.settingSource
+      - id: editable
+        expr: it.setting.isSettingEditable)
+      - id: allow_overrides
+        expr: it.setting.allowOverrides)
+      - id: value_type
+        expr: it.setting.valueType
+      - id: allowed_values
+        expr: jsonArray(it.setting.allowedValues)
+      - id: allowed_scopes
+        expr: jsonArray(it.setting.allowedScopes)
+      - id: updated
+        expr: epochMs(it.lastModifiedAt)
+
+  - noun: setting_value
+    short_desc: The current effective value of a setting after scope resolution.
+    fields:
+      - id: value
+        expr: it.value
+      - id: value_type
+        expr: it.valueType
+
+  - noun: connector
+    short_desc: An integration that connects Harness to an external service (cloud, repo, registry, etc.).
+    multi_level: true
+    fields:
+      - id: identifier
+        expr: it.connector.identifier
+      - id: name
+        expr: it.connector.name
+      - id: type
+        expr: it.connector.type
+
+  - noun: delegate
+    short_desc: An agent installed in your infrastructure that executes pipeline tasks on Harness's behalf.
+    multi_level: true
+    fields:
+      - id: identifier
+        expr: it.delegateGroupIdentifier
+      - id: name
+        expr: it.groupName
+      - id: type
+        expr: it.delegateType
+      - id: status
+        expr: it.connectivityStatus
+      - id: version
+        expr: it.activelyConnected
+
+  - noun: secret
+    short_desc: An encrypted credential or sensitive value stored in a secrets manager.
+    multi_level: true
+    fields:
+      - id: identifier
+        expr: it.secret.identifier
+      - id: name
+        expr: it.secret.name
+      - id: type
+        expr: it.secret.type
+      - id: secret_manager
+        expr: it.secret.spec.secretManagerIdentifier
+      - id: updated
+        expr: epochMs(it.updatedAt)
+      - id: created
+        expr: epochMs(it.createdAt)
+
+commands:
+  - command: list organization
+    verb: list
+    noun: organization
+    short: List organizations in the account
+    handler_type: endpoint
+    flags:
+      - name: search
+        description: Filter organizations by name or ID
+    endpoint:
+      path: /ng/api/organizations
+      items_expr: it.data.content
+      item_item_expr: it.organization
+      columns: [identifier, name]
+      get_id_expr: it.organization.identifier
+      completion:
+        id_expr: it.organization.identifier
+        name_expr: it.organization.name
+      query_params:
+        searchTerm: flags.search
+      paging:
+        paging_strategy: page_index
+        countable: true
+        page_index_param: pageIndex
+        page_size_param: pageSize
+        page_size_default: 50
+        page_size_max: 100
+        total_expr: it.data.totalItems
+
+  - command: get organization
+    verb: get
+    noun: organization
+    short: Get an organization by identifier
+    handler_type: endpoint
+    endpoint:
+      path: /ng/api/organizations/{{ctx.id}}
+      item_expr: it.data.organization
+
+  - command: update organization
+    verb: update
+    noun: organization
+    short: Update an organization
+    flags_builtin:
+      set: true
+      del: true
+    handler_type: endpoint
+    endpoint:
+      method: PUT
+      file_body: optional
+      path: /ng/api/organizations/{{ctx.id}}
+      item_expr: it.data.organization
+      update_strategy: get-then-put
+      update_body_pick: it
+      update_body_wrap: organization
+      query_params:
+        accountIdentifier: auth.account
+
+  - command: create organization
+    verb: create
+    noun: organization
+    requires_id: true
+    short: Create a new organization
+    flags_builtin:
+      set: true
+    handler_type: endpoint
+    endpoint:
+      method: POST
+      path: /ng/api/organizations
+      item_expr: it.data.organization
+      create_strategy: set-fields
+      create_body_init:
+        identifier: ctx.id
+        name: coalesce(ctx.setArgs.name, ctx.id)
+      create_body_wrap: organization
+      query_params:
+        accountIdentifier: auth.account
+
+  - command: delete organization
+    verb: delete
+    noun: organization
+    confirm_mode: confirm_id
+    short: Delete an organization by identifier
+    handler_type: endpoint
+    endpoint:
+      method: DELETE
+      path: /ng/api/organizations/{{ctx.id}}
+      item_expr: it
+      text_header: "\nDeleted organization {{ctx.id}}\n"
+      query_params:
+        accountIdentifier: auth.account
+
+  - command: list project
+    verb: list
+    noun: project
+    short: List projects in an organization
+    flags_builtin:
+      level: true
+    handler_type: endpoint
+    flags:
+      - name: search
+        description: Filter projects by name
+    endpoint:
+      path: /ng/api/projects
+      items_expr: it.data.content
+      get_id_expr: it.project.identifier
+      fields_subset:
+        [
+          identifier,
+          name,
+          org,
+          description,
+          color,
+          modules,
+          tags,
+          created_at,
+          updated_at,
+          last_moved_at,
+          favorite,
+          url,
+        ]
+      columns: [identifier, name, org]
+      completion:
+        id_expr: it.project.identifier
+        name_expr: it.project.name
+      query_params:
+        searchTerm: flags.search
+      paging:
+        paging_strategy: page_index
+        countable: true
+        page_index_param: pageIndex
+        page_size_param: pageSize
+        page_size_default: 50
+        page_size_max: 100
+        total_expr: it.data.totalItems
+
+  - command: get project
+    verb: get
+    noun: project
+    short: Get a project by identifier
+    completion_noun: project
+    flags_builtin:
+      ui: true
+    handler_type: endpoint
+    endpoint:
+      path: /ng/api/projects/{{ctx.id}}
+      item_expr: it.data
+      query_params:
+        accountIdentifier: auth.account
+        orgIdentifier: auth.org
+
+  - command: delete project
+    verb: delete
+    noun: project
+    confirm_mode: confirm_id
+    short: Delete a project by identifier
+    handler_type: endpoint
+    endpoint:
+      method: DELETE
+      path: /ng/api/projects/{{ctx.id}}
+      text_header: "\nDeleted project {{ctx.id}}\n"
+      query_params:
+        accountIdentifier: auth.account
+        orgIdentifier: auth.org
+
+  - command: update project
+    verb: update
+    noun: project
+    short: Update a project
+    flags_builtin:
+      set: true
+      del: true
+    handler_type: endpoint
+    endpoint:
+      method: PUT
+      file_body: optional
+      path: /ng/api/projects/{{ctx.id}}
+      item_expr: it.data
+      update_strategy: get-then-put
+      update_body_pick: it.project
+      update_body_wrap: project
+      query_params:
+        accountIdentifier: auth.account
+        orgIdentifier: auth.org
+
+  - command: create project
+    verb: create
+    noun: project
+    requires_id: true
+    short: Create a new project
+    flags_builtin:
+      set: true
+    handler_type: endpoint
+    endpoint:
+      method: POST
+      path: /ng/api/projects
+      item_expr: it.data
+      create_strategy: set-fields
+      create_body_init:
+        identifier: ctx.id
+        name: coalesce(ctx.setArgs.name, ctx.id)
+        color: '"#004fc4"'
+        orgIdentifier: auth.org
+      create_body_wrap: project
+      query_params:
+        accountIdentifier: auth.account
+        orgIdentifier: auth.org
+
+  - command: list user
+    verb: list
+    noun: user
+    short: List users in the account
+    flags_builtin:
+      level: true
+    handler_type: endpoint
+    flags:
+      - name: search
+        description: Filter users by name or email
+    endpoint:
+      method: POST
+      path: /ng/api/user/aggregate
+      items_expr: it.data.content
+      columns: [uuid, email]
+      get_id_expr: it.user.uuid
+      completion:
+        id_expr: it.user.uuid
+        name_expr: it.user.email
+      query_params:
+        searchTerm: flags.search
+      paging:
+        paging_strategy: page_index
+        countable: true
+        page_index_param: pageIndex
+        page_size_param: pageSize
+        page_size_default: 50
+        page_size_max: 100
+        total_expr: it.data.totalItems
+
+  - command: get user
+    verb: get
+    noun: user
+    short: Get a user by identifier
+    flags_builtin:
+      level: true
+    handler_type: endpoint
+    endpoint:
+      path: /ng/api/user/aggregate/{{ctx.id}}
+      item_expr: it.data
+
+  - command: list user_group
+    verb: list
+    noun: user_group
+    short: List user groups in the account
+    flags_builtin:
+      level: true
+    handler_type: endpoint
+    flags:
+      - name: search
+        description: Filter user groups by name or keyword
+    endpoint:
+      path: /ng/api/user-groups
+      items_expr: it.data.content
+      get_id_expr: it.identifier
+      fields_subset: [identifier, name]
+      fields_extra:
+        - id: user_count
+          expr: len(it.users)
+      columns: [identifier, name, user_count]
+      completion:
+        id_expr: it.identifier
+        name_expr: it.name
+      query_params:
+        searchTerm: flags.search
+      paging:
+        paging_strategy: page_index
+        countable: true
+        page_index_param: pageIndex
+        page_size_param: pageSize
+        page_size_default: 50
+        page_size_max: 100
+        total_expr: it.data.totalItems
+
+  - command: get user_group
+    verb: get
+    noun: user_group
+    short: Get a user group by identifier
+    flags_builtin:
+      level: true
+    handler_type: endpoint
+    endpoint:
+      path: /ng/api/user-groups/{{ctx.id}}
+      item_expr: it.data
+
+  - command: list service_account
+    verb: list
+    noun: service_account
+    short: List service accounts in the account
+    flags_builtin:
+      level: true
+    handler_type: endpoint
+    flags:
+      - name: search
+        description: Filter service accounts by name or keyword
+    endpoint:
+      path: /ng/api/serviceaccount
+      items_expr: it.data
+      columns: [identifier, name, email]
+      get_id_expr: it.identifier
+      completion:
+        id_expr: it.identifier
+        name_expr: it.name
+      query_params:
+        searchTerm: flags.search
+      paging:
+        paging_strategy: flat_list
+
+  - command: get service_account
+    verb: get
+    noun: service_account
+    short: Get a service account by identifier
+    flags_builtin:
+      level: true
+    handler_type: endpoint
+    endpoint:
+      path: /ng/api/serviceaccount/aggregate/{{ctx.id}}
+      item_expr: it.data.serviceAccount
+
+  - command: list role
+    verb: list
+    noun: role
+    short: List roles in the account
+    flags_builtin:
+      level: true
+    handler_type: endpoint
+    flags:
+      - name: search
+        description: Filter roles by name or keyword
+    endpoint:
+      path: /authz/api/roles
+      items_expr: it.data.content
+      get_id_expr: it.role.identifier
+      fields_subset:
+        [
+          identifier,
+          name,
+          description,
+          scopes,
+          harness_managed,
+          created_at,
+          updated_at,
+        ]
+      fields_extra:
+        - id: assigned_users
+          expr: it.roleAssignedToUserCount
+        - id: assigned_user_groups
+          expr: it.roleAssignedToUserGroupCount
+        - id: assigned_service_accounts
+          expr: it.roleAssignedToServiceAccountCount
+      columns: [identifier, name]
+      completion:
+        id_expr: it.role.identifier
+        name_expr: it.role.name
+      query_params:
+        searchTerm: flags.search
+      paging:
+        paging_strategy: page_index
+        countable: true
+        page_index_param: pageIndex
+        page_size_param: pageSize
+        page_size_default: 50
+        page_size_max: 100
+        total_expr: it.data.totalItems
+
+  - command: get role
+    verb: get
+    noun: role
+    short: Get a role by identifier
+    flags_builtin:
+      level: true
+    handler_type: endpoint
+    endpoint:
+      path: /authz/api/roles/{{ctx.id}}
+      item_expr: it.data
+
+  - command: list role_assignment
+    verb: list
+    noun: role_assignment
+    short: List role assignments in scope
+    flags_builtin:
+      level: true
+    handler_type: endpoint
+    flags:
+      - name: principal_type
+        description: "Filter by principal type: USER, USER_GROUP, SERVICE_ACCOUNT"
+        completion_values: [USER, USER_GROUP, SERVICE_ACCOUNT]
+      - name: role
+        description: Filter by role identifier
+      - name: resource_group
+        description: Filter by resource group identifier
+    endpoint:
+      method: POST
+      path: /authz/api/roleassignments/filter
+      items_expr: it.data.content
+      columns: [identifier, role, resource_group, principal, principal_type]
+      get_id_expr: it.roleAssignment.identifier
+      completion:
+        id_expr: it.roleAssignment.identifier
+        name_expr: it.roleAssignment.identifier
+      body_params:
+        principalTypeFilter: "flags.principal_type != nil && flags.principal_type != '' ? [flags.principal_type] : nil"
+        roleFilter: "flags.role != nil && flags.role != '' ? [flags.role] : nil"
+        resourceGroupFilter: "flags.resource_group != nil && flags.resource_group != '' ? [flags.resource_group] : nil"
+      paging:
+        paging_strategy: page_index
+        countable: true
+        page_index_param: pageIndex
+        page_size_param: pageSize
+        page_size_default: 50
+        page_size_max: 100
+        total_expr: it.data.totalItems
+
+  - command: get role_assignment
+    verb: get
+    noun: role_assignment
+    short: Get a role assignment by identifier
+    flags_builtin:
+      level: true
+    handler_type: endpoint
+    endpoint:
+      path: /authz/api/roleassignments/{{ctx.id}}
+      item_expr: it.data
+
+  - command: list resource_group
+    verb: list
+    noun: resource_group
+    short: List resource groups in scope
+    flags_builtin:
+      level: true
+    handler_type: endpoint
+    flags:
+      - name: search
+        description: Filter resource groups by name or keyword
+    endpoint:
+      path: /authz/api/v2/resourcegroup
+      items_expr: it.data.content
+      columns: [identifier, name, harness_managed]
+      get_id_expr: it.resourceGroup.identifier
+      completion:
+        id_expr: it.resourceGroup.identifier
+        name_expr: it.resourceGroup.name
+      query_params:
+        searchTerm: flags.search
+      paging:
+        paging_strategy: page_index
+        countable: true
+        page_index_param: pageIndex
+        page_size_param: pageSize
+        page_size_default: 50
+        page_size_max: 100
+        total_expr: it.data.totalItems
+
+  - command: get resource_group
+    verb: get
+    noun: resource_group
+    short: Get a resource group by identifier
+    flags_builtin:
+      level: true
+    handler_type: endpoint
+    endpoint:
+      path: /authz/api/v2/resourcegroup/{{ctx.id}}
+      item_expr: it.data
+
+  - command: list permission
+    verb: list
+    noun: permission
+    short: List all available permissions
+    handler_type: endpoint
+    flags:
+      - name: search
+        description: Filter permissions by name or keyword
+    endpoint:
+      path: /authz/api/permissions
+      items_expr: it.data
+      columns: [identifier, name, resource_type, action, status]
+      get_id_expr: it.permission.identifier
+      completion:
+        id_expr: it.permission.identifier
+        name_expr: it.permission.name
+      query_params:
+        searchTerm: flags.search
+      paging:
+        paging_strategy: flat_list
+
+  - command: get permission
+    verb: get
+    noun: permission
+    short: Get a permission by identifier
+    handler_type: endpoint
+    endpoint:
+      path: /authz/api/permissions
+      item_expr: filter(it.data, {.permission.identifier == ctx.id})[0]
+
+  - command: list setting
+    verb: list
+    noun: setting
+    short: List platform settings
+    flags_builtin:
+      level: true
+    handler_type: endpoint
+    flags:
+      - name: category
+        required: true
+        description: "Category to list settings for"
+        completion_values: [CD, CI, CE, CV, CF, STO, CORE, PMS, TEMPLATESERVICE, GOVERNANCE, CHAOS, SCIM, GIT_EXPERIENCE, CONNECTORS, EULA, NOTIFICATIONS, SUPPLY_CHAIN_ASSURANCE, USER, MODULES_VISIBILITY, DBOPS, IR, AR]
+      - name: group
+        description: Filter by setting group
+    endpoint:
+      path: /ng/api/settings
+      items_expr: it.data
+      columns: [identifier, name, value, default, source]
+      get_id_expr: it.setting.identifier
+      completion:
+        id_expr: it.setting.identifier
+        name_expr: it.setting.name
+      query_params:
+        category: flags.category
+        group: flags.group
+        orgIdentifier: ctx.org
+        projectIdentifier: ctx.project
+      paging:
+        paging_strategy: flat_list
+
+  - command: get setting
+    verb: get
+    noun: setting
+    fields_noun: setting_value
+    short: Get a setting value by identifier
+    flags_builtin:
+      level: true
+    handler_type: endpoint
+    endpoint:
+      path: /ng/api/settings/{{ctx.id}}
+      item_expr: it.data
+
+  - command: list connector
+    verb: list
+    noun: connector
+    short: List connectors
+    flags_builtin:
+      level: true
+    handler_type: endpoint
+    flags:
+      - name: search
+        description: Filter connectors by name or keyword
+    endpoint:
+      method: POST
+      path: /ng/api/connectors/listV2
+      items_expr: it.data.content
+      columns: [identifier, name, type, status]
+      get_id_expr: it.connector.identifier
+      completion:
+        id_expr: it.connector.identifier
+        name_expr: it.connector.name
+      query_params:
+        searchTerm: flags.search
+      body_params:
+        filterType: '"Connector"'
+      paging:
+        paging_strategy: page_index
+        countable: true
+        page_index_param: pageIndex
+        page_size_param: pageSize
+        page_size_default: 50
+        page_size_max: 100
+        total_expr: it.data.totalItems
+
+  - command: get connector
+    verb: get
+    noun: connector
+    short: Get a connector by identifier
+    completion_noun: connector
+    flags_builtin:
+      level: true
+    handler_type: endpoint
+    endpoint:
+      path: /ng/api/connectors/{{ctx.id}}
+      item_expr: it.data
+
+  - command: list secret
+    verb: list
+    noun: secret
+    short: List secrets (metadata only, values never returned)
+    flags_builtin:
+      level: true
+    handler_type: endpoint
+    flags:
+      - name: search
+        description: Filter secrets by name or keyword
+      - name: type
+        description: "Filter by type: SecretFile, SecretText, SSHKey, WinRmCredentials"
+    endpoint:
+      method: POST
+      path: /ng/api/v2/secrets/list/secrets
+      items_expr: it.data.content
+      fields_subset: [identifier, name, type]
+      columns: [identifier, name, type]
+      get_id_expr: it.secret.identifier
+      completion:
+        id_expr: it.secret.identifier
+        name_expr: it.secret.name
+      query_params:
+        searchTerm: flags.search
+      body_params:
+        filterType: '"Secret"'
+      paging:
+        paging_strategy: page_index
+        countable: true
+        page_index_param: pageIndex
+        page_size_param: pageSize
+        page_size_default: 50
+        page_size_max: 100
+        total_expr: it.data.totalItems
+
+  - command: get secret
+    verb: get
+    noun: secret
+    short: Get a secret by identifier (metadata only, value never returned)
+    completion_noun: secret
+    flags_builtin:
+      level: true
+    handler_type: endpoint
+    endpoint:
+      path: /ng/api/v2/secrets/{{ctx.id}}
+      item_expr: it.data
+
+  - command: list delegate
+    verb: list
+    noun: delegate
+    short: List delegates in the account
+    flags_builtin:
+      level: true
+    handler_type: endpoint
+    flags:
+      - name: status
+        description: "Filter by status: CONNECTED, DISCONNECTED, ENABLED, WAITING_FOR_APPROVAL, DISABLED, DELETED"
+    endpoint:
+      method: POST
+      path: /ng/api/delegate-setup/listDelegates
+      items_expr: it.resource
+      columns: [identifier, name, type, status, version]
+      get_id_expr: it.delegateGroupIdentifier
+      completion:
+        id_expr: it.delegateGroupIdentifier
+        name_expr: it.groupName
+      body_params:
+        filterType: '"Delegate"'
+      paging:
+        paging_strategy: flat_list
+      query_params:
+        status: flags.status
+
+  - command: get delegate
+    verb: get
+    noun: delegate
+    short: Get a delegate by identifier
+    flags_builtin:
+      level: true
+    handler_type: endpoint
+    endpoint:
+      method: POST
+      path: /ng/api/delegate-setup/listDelegates
+      item_expr: it.resource[0]
+      body_params:
+        filterType: '"Delegate"'
+        delegateGroupIdentifier: ctx.id
+
+  - command: get account
+    verb: get
+    noun: account
+    no_id: true
+    short: Get the current account details
+    handler_type: endpoint
+    endpoint:
+      path: /ng/api/accounts/{{auth.account}}
+      item_expr: it.data

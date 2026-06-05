@@ -1,0 +1,235 @@
+package migratable
+
+import (
+	"context"
+	"fmt"
+	"time"
+
+	"github.com/harness/harness-cli/modules/har/pkg/har/migrate/adapter"
+	"github.com/harness/harness-cli/modules/har/pkg/har/migrate/engine"
+	"github.com/harness/harness-cli/modules/har/pkg/har/migrate/tree"
+	"github.com/harness/harness-cli/modules/har/pkg/har/migrate/types"
+	"github.com/harness/harness-cli/modules/har/pkg/har/migrate/util"
+
+	"github.com/google/uuid"
+	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/log"
+)
+
+type Registry struct {
+	srcRegistry           string
+	sourcePackageHostname string
+	destRegistry          string
+	srcAdapter            adapter.Adapter
+	destAdapter           adapter.Adapter
+	artifactType          types.ArtifactType
+	logger                zerolog.Logger
+	stats                 *types.TransferStats
+	mapping               *types.RegistryMapping
+	config                *types.Config
+	dryRunStats           *types.DryRunStats
+
+	// Transient
+	registry types.RegistryInfo
+}
+
+func NewRegistryJob(
+	src adapter.Adapter,
+	dest adapter.Adapter,
+	srcRegistry string,
+	sourcePackageHostname string,
+	destRegistry string,
+	artifactType types.ArtifactType,
+	stats *types.TransferStats,
+	mapping *types.RegistryMapping,
+	config *types.Config,
+	dryRunStats *types.DryRunStats,
+) engine.Job {
+	jobID := uuid.New().String()
+
+	jobLogger := log.With().
+		Str("job_type", "registry").
+		Str("job_id", jobID).
+		Str("source_registry", srcRegistry).
+		Str("dest_registry", destRegistry).
+		Logger()
+
+	return &Registry{
+		srcRegistry:           srcRegistry,
+		sourcePackageHostname: sourcePackageHostname,
+		destRegistry:          destRegistry,
+		srcAdapter:            src,
+		destAdapter:           dest,
+		artifactType:          artifactType,
+		logger:                jobLogger,
+		stats:                 stats,
+		mapping:               mapping,
+		config:                config,
+		dryRunStats:           dryRunStats,
+	}
+}
+
+func (r *Registry) Info() string {
+	return r.srcRegistry + ":" + r.destRegistry
+}
+
+// Pre Create registry at destination if it doesn't exist
+func (r *Registry) Pre(ctx context.Context) error {
+	// Extract trace ID from context if available
+	traceID, _ := ctx.Value("trace_id").(string)
+	logger := r.logger.With().
+		Str("step", "pre").
+		Str("trace_id", traceID).
+		Logger()
+
+	logger.Info().Msg("Starting registry pre-migration step")
+
+	startTime := time.Now()
+
+	// Skip destination registry check in dry-run mode
+	if r.config.DryRun {
+		logger.Info().Msg("Dry-run mode: skipping destination registry check")
+		r.registry = types.RegistryInfo{
+			Path: r.destRegistry,
+		}
+		logger.Info().
+			Dur("duration", time.Since(startTime)).
+			Msg("Completed registry pre-migration step (dry-run)")
+		return nil
+	}
+
+	registry, err := r.destAdapter.GetRegistry(ctx, r.destRegistry)
+	if err != nil {
+		log.Error().Err(err).Msgf("Failed to get registry %q", r.destRegistry)
+		return fmt.Errorf("failed to get registry %q", r.destRegistry)
+	}
+
+	log.Info().Ctx(ctx).Msgf("Found registry %+v", registry)
+	r.registry = registry
+
+	logger.Info().
+		Dur("duration", time.Since(startTime)).
+		Msg("Completed registry pre-migration step")
+	return nil
+}
+
+// Migrate Create down stream packages and migrate them
+func (r *Registry) Migrate(ctx context.Context) error {
+	traceID, _ := ctx.Value("trace_id").(string)
+	logger := r.logger.With().
+		Str("step", "migrate").
+		Str("trace_id", traceID).
+		Logger()
+
+	logger.Info().Msg("Starting registry migration step")
+
+	if len(r.mapping.IncludePatterns) > 0 && len(r.mapping.ExcludePatterns) > 0 {
+		logger.Error().Msgf("Either include or Exclude Pattern is suppoted at a time for %s", r.artifactType)
+		return fmt.Errorf("failed in validating config file for %s ", r.artifactType)
+	}
+
+	startTime := time.Now()
+
+	files, err2 := r.srcAdapter.GetFiles(r.srcRegistry)
+	if err2 != nil {
+		logger.Error().Msgf("Failed to get files from registry %s", r.srcRegistry)
+		return fmt.Errorf("get files from registry %s failed: %w", r.srcRegistry, err2)
+	}
+
+	// In dry-run mode, collect all files and initialize directory entry for this registry
+	if r.config.DryRun && r.dryRunStats != nil {
+		// Add all files to the file list
+		for _, file := range files {
+			entry := types.DryRunFileEntry{
+				Registry:     r.srcRegistry,
+				Name:         file.Name,
+				Uri:          file.Uri,
+				Size:         file.Size,
+				LastModified: file.LastModified,
+			}
+			r.dryRunStats.Files = append(r.dryRunStats.Files, entry)
+		}
+		logger.Info().Msgf("Dry-run: collected %d files from registry %s", len(files), r.srcRegistry)
+
+		// Initialize directory entry for this registry
+		if r.dryRunStats.Directories[r.srcRegistry] == nil {
+			r.dryRunStats.Directories[r.srcRegistry] = &types.DryRunDirectoryEntry{
+				Registry: r.srcRegistry,
+				Packages: make(map[string]*types.DryRunPackageEntry),
+			}
+		}
+	}
+
+	// Filter files based on include/exclude patterns
+	currArtifactType := r.artifactType
+	if util.IsFileLevelFilterableArtifact(currArtifactType) {
+		if len(r.mapping.IncludePatterns) > 0 || len(r.mapping.ExcludePatterns) > 0 {
+			originalCount := len(files)
+			filteredFiles := util.FilterFilesByPatterns(files, r.mapping.IncludePatterns, r.mapping.ExcludePatterns)
+			files = filteredFiles
+			logger.Info().Msgf("Filtered files: %d -> %d (includePatterns: %v, excludePatterns: %v)",
+				originalCount, len(files), r.mapping.IncludePatterns, r.mapping.ExcludePatterns)
+		}
+	}
+
+	root := tree.TransformToTree(files)
+
+	pkgs, err := r.srcAdapter.GetPackages(r.srcRegistry, r.artifactType, root)
+	if err != nil {
+		logger.Error().Msg("Failed to get packages")
+		return fmt.Errorf("get packages failed: %w", err)
+	}
+
+	// applying package level filter
+	if util.IsPackageLevelFilterableArtifact(currArtifactType) {
+		if len(r.mapping.IncludePatterns) > 0 || len(r.mapping.ExcludePatterns) > 0 {
+			originalCount := len(pkgs)
+			filteredPackages := util.FilterFilesByPatternsPackageName(pkgs, r.mapping.IncludePatterns, r.mapping.ExcludePatterns)
+			pkgs = filteredPackages
+			logger.Info().Msgf("Filtered packages: %d -> %d (includePatterns: %v, excludePatterns: %v)",
+				originalCount, len(pkgs), r.mapping.IncludePatterns, r.mapping.ExcludePatterns)
+		}
+	}
+
+	var jobs []engine.Job
+	for _, pkg := range pkgs {
+		treeNode, err2 := tree.GetNodeForPath(root, pkg.Path)
+		if err2 != nil {
+			logger.Error().Msgf("Failed to get node for path %s", pkg.Path)
+			return fmt.Errorf("get node for path %s failed: %w", pkg.Path, err2)
+		}
+		job := NewPackageJob(r.srcAdapter, r.destAdapter, r.srcRegistry, r.sourcePackageHostname, r.destRegistry, r.artifactType, pkg, treeNode,
+			r.stats, r.mapping, r.config, r.registry, r.dryRunStats)
+		jobs = append(jobs, job)
+	}
+
+	eng := engine.NewEngine(r.config.Concurrency, jobs)
+	err = eng.Execute(ctx)
+	if err != nil {
+		logger.Error().Err(err).Msg("Engine execution saw following errors")
+	}
+
+	logger.Info().
+		Dur("duration", time.Since(startTime)).
+		Msg("Completed registry migration step")
+	return nil
+}
+
+// Post Any post processing work
+func (r *Registry) Post(ctx context.Context) error {
+	traceID, _ := ctx.Value("trace_id").(string)
+	logger := r.logger.With().
+		Str("step", "post").
+		Str("trace_id", traceID).
+		Logger()
+
+	logger.Info().Msg("Starting registry post-migration step")
+
+	startTime := time.Now()
+	// Your post-migration code here
+
+	logger.Info().
+		Dur("duration", time.Since(startTime)).
+		Msg("Completed registry post-migration step")
+	return nil
+}

@@ -1,0 +1,84 @@
+spec_version: 1
+module_type: builtin
+module_desc: Infrastructure as Code Management (workspaces, resources)
+
+nouns:
+  - noun: workspace
+    short_desc: An IACM workspace that manages Terraform/OpenTofu infrastructure state.
+    url_path: /ng/account/{{auth.account}}/module/iacm/orgs/{{auth.org}}/projects/{{auth.project}}/workspaces/{{it.identifier}}
+    fields:
+      - id: identifier
+        expr: it.identifier
+      - id: name
+        expr: it.name
+      - id: status
+        expr: it.status
+      - id: description
+        expr: it.description
+      - id: repository_path
+        expr: it.repository_path
+      - id: updated
+        expr: epochMs(it.updated)
+
+commands:
+  - command: list workspace
+    verb: list
+    noun: workspace
+    short: List IACM workspaces in a project
+    handler_type: endpoint
+    flags:
+      - name: search
+        description: Filter workspaces by name
+    endpoint:
+      path: /gateway/iacm/api/orgs/{{auth.org}}/projects/{{auth.project}}/workspaces
+      items_expr: it
+      get_id_expr: it.identifier
+      completion:
+        id_expr: it.identifier
+        name_expr: it.name
+      query_params:
+        searchTerm: flags.search
+      paging:
+        paging_strategy: page_header
+        countable: true
+        page_index_param: page
+        page_size_param: limit
+        page_size_default: 30
+        page_size_max: 100
+        page_base: 1
+        total_header: "X-Total-Items"
+      columns: [identifier, name, status, updated]
+
+  - command: get workspace
+    verb: get
+    noun: workspace
+    short: Get an IACM workspace by identifier
+    completion_noun: workspace
+    flags_builtin:
+      ui: true
+    handler_type: endpoint
+    endpoint:
+      path: /gateway/iacm/api/orgs/{{auth.org}}/projects/{{auth.project}}/workspaces/{{ctx.id}}
+      item_expr: it
+
+  - command: execute workspace
+    verb: execute
+    noun: workspace
+    short: Execute a remote Terraform plan on a workspace
+    id_label: "<workspace-id>"
+    completion_noun: workspace
+    handler_type: workflow
+    workflow_id: execute_workspace
+    flags:
+      - name: plan
+        description: "Execute a Terraform plan (default operation)"
+        is_bool: true
+      - name: target
+        description: "Resource target (can be specified multiple times)"
+        is_multi: true
+      - name: replace
+        description: "Variable replacement in key=value format (can be specified multiple times)"
+        is_multi: true
+      - name: force
+        description: "Skip confirmation prompt"
+        is_bool: true

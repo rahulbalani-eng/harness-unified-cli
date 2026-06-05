@@ -1,0 +1,52 @@
+Harness CLI — Quick Reference
+
+Grammar:
+  harness <verb> <noun> [id] [flags]              get, update, delete, execute
+  harness list <noun> [scope] [flags]             scope narrows results to a parent resource
+  harness <verb> <noun>:<qualifier> [id] [flags]  qualified variant (e.g. get pipeline:summary, execute pipeline:input_set)
+
+Auth:
+  harness auth status          show resolved account, org, and project
+  harness auth login           interactive setup
+
+Modules:
+{{modules}}
+
+Discover:
+  harness get module <name>          domain model, nouns, and guides for a module
+  harness get noun <noun>            fields and commands for a specific noun
+  harness <verb> <noun> --help       flags specific to a command
+
+Common verbs:
+  list      list resources; optional [scope] narrows results (e.g. pipeline id for executions)
+  get       get a single resource by id
+  create    create a resource (--file/-f for YAML body, or --set key=value)
+  update    update a resource by id (--set key=value, --del key)
+  delete    delete a resource by id
+  execute   run/trigger a resource by id (e.g. pipeline)
+
+Scope flags (all commands):
+  --org, --project                 override resolved scope
+  --profile                        use a named auth profile
+  --level project|org|account      set scope for multi-level nouns (e.g. secrets, users)
+  --timeout <seconds>              abort after N seconds (0 = no timeout, e.g. 1.5); exits 124
+
+Output flags (list):
+  --format table|json|jsonl|csv|tsv|markdown    output format (default: table)
+  --json                                        shorthand for --format json
+  --columns <ids or exprs>                      customize columns (e.g. "name,org" or "+tags")
+  --list-columns                                print available column IDs for this command
+
+Output flags (get, create, update):
+  --format text|json               output format (default: text)
+  --json                           shorthand for --format json
+  --list-fields                    print available field IDs for this command
+
+Examples:
+  harness list project
+  harness list pipeline --org my-org --all
+  harness get pipeline my-pipeline
+  harness execute pipeline my-pipeline
+  harness get module pipeline
+
+For detailed help on any command:  harness <verb> <noun> --help

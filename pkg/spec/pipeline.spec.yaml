@@ -208,7 +208,7 @@ nouns:
     short_desc: An individual step within a pipeline execution, including loop and matrix iterations.
     fields:
       - id: name
-        expr: it["name"]
+        expr: spaceAfter(statusIcon(it["status"])) + it["name"]
       - id: type
         expr: it["type"]
       - id: status
@@ -218,6 +218,22 @@ nouns:
         align: right
       - id: delegate
         expr: it["delegate"]
+      - id: error
+        expr: it["error"]
+      - id: identifier
+        expr: it["identifier"]
+      - id: fqn
+        label: FQN
+        expr: it["fqn"]
+      - id: log_key
+        label: LogKey
+        expr: it["log_key"]
+      - id: uuid
+        label: UUID
+        expr: it["uuid"]
+      - id: started
+        label: Started
+        expr: epochMs(it["started"])
 
   - noun: runtime_input_template
     short_desc: The set of runtime input placeholders (<+input>) that a pipeline requires at execution time.
@@ -501,7 +517,7 @@ commands:
       get_id_expr: "-"
       paging:
         paging_strategy: flat_list
-      columns: [name, type, status, duration, delegate]
+      columns: [name, type, status, duration, delegate, error]
 
   - command: list execution_log
     verb: list

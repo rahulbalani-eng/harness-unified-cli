@@ -134,18 +134,24 @@ func listExecutionStepsFetchFn(ctx *cmdctx.Ctx, _ *spec.EndpointSpec, _, _ int, 
 		nextDepth := depth
 		if !skipStepTypes[node.StepType] {
 			indent := strings.Repeat("  ", depth)
-			name := indent + execgraph.NodeName(node)
 			status := node.Status
+			name := indent + execgraph.NodeName(node)
 			delegate := ""
 			if len(node.DelegateInfoList) > 0 {
 				delegate = node.DelegateInfoList[0].Name
 			}
 			rows = append(rows, map[string]any{
-				"name":     name,
-				"type":     node.StepType,
-				"status":   status,
-				"duration": fmtNodeDuration(node.StartTs, node.EndTs),
-				"delegate": delegate,
+				"name":       name,
+				"type":       node.StepType,
+				"status":     status,
+				"duration":   fmtNodeDuration(node.StartTs, node.EndTs),
+				"delegate":   delegate,
+				"error":      node.FailureInfo.Message,
+				"identifier": node.Identifier,
+				"fqn":        node.BaseFQN,
+				"log_key":    node.LogBaseKey,
+				"uuid":       node.UUID,
+				"started":    node.StartTs,
 			})
 			nextDepth = depth + 1
 		}

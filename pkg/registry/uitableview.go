@@ -318,7 +318,22 @@ func (m uiTableModel) fetchPage(page int) tea.Cmd {
 			return uiPageMsg{page: page, err: err}
 		}
 
-		rows, err := itemsToTableRows(items, tspec, exprEnv)
+		// rowItems are unwrapped for column expression evaluation; items stays
+		// as the raw API objects so get_id_expr and completion id_expr work correctly.
+		rowItems := items
+		if ep.ItemItemExpr != "" {
+			unwrapped := make([]any, 0, len(items))
+			for _, item := range items {
+				if v, ok := exprenv.EvalExprAny(exprenv.WithIt(exprEnv, item), ep.ItemItemExpr); ok {
+					unwrapped = append(unwrapped, v)
+				} else {
+					unwrapped = append(unwrapped, item)
+				}
+			}
+			rowItems = unwrapped
+		}
+
+		rows, err := itemsToTableRows(rowItems, tspec, exprEnv)
 		if err != nil {
 			return uiPageMsg{page: page, err: err}
 		}

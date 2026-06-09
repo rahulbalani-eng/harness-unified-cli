@@ -56,9 +56,22 @@ func formatGetExecution(w io.Writer, d cmdctx.DataAccessor) error {
 		fmt.Fprintf(w, "\nError:  %s\n", failureMsg)
 	}
 
+	execID := d.GetString(s + ".planExecutionId")
+	pipelineID := d.GetString(s + ".pipelineIdentifier")
+	ref := execID
+	if pipelineID != "" && execID != "" {
+		ref = pipelineID + "/" + execID
+	}
+
 	if g, err := reUnmarshal[executionGraphEnvelope](d.GetData()); err == nil && g.ExecutionGraph.RootNodeID != "" {
 		fmt.Fprintf(w, "\n")
 		printExecutionTree(w, g.ExecutionGraph)
+	}
+
+	if ref != "" {
+		fmt.Fprintf(w, "\nDig deeper:\n")
+		fmt.Fprintf(w, "  harness list execution_step %s\n", ref)
+		fmt.Fprintf(w, "  harness get execution_log %s\n", ref)
 	}
 
 	if u := d.GetString("url(it)"); u != "" {

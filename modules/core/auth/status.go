@@ -46,6 +46,7 @@ type statusResult struct {
 	AccountID   string       `json:"AccountID"`
 	OrgID       string       `json:"OrgID,omitempty"`
 	ProjectID   string       `json:"ProjectID,omitempty"`
+	ProjectURL  string       `json:"ProjectURL,omitempty"`
 	Status      statusChecks `json:"Status"`
 	CurrentUser any          `json:"CurrentUser,omitempty"`
 }
@@ -172,6 +173,8 @@ func runStatusChecks(profileFlag string) statusResult {
 		return r
 	}
 	r.Status.Project = &checkResult{OK: true, Name: projectName}
+	r.ProjectURL = fmt.Sprintf("%s/ng/account/%s/all/orgs/%s/projects/%s/overview",
+		resolved.APIUrl, resolved.AccountID, resolved.OrgID, resolved.ProjectID)
 
 	return r
 }
@@ -255,6 +258,9 @@ func printStatus(r statusResult) {
 			}
 			return r.ProjectID
 		}(), proj.Error))
+		if r.ProjectURL != "" {
+			add("ProjectURL", r.ProjectURL)
+		}
 	}
 
 	format.WriteLabeledValues(os.Stdout, rows)

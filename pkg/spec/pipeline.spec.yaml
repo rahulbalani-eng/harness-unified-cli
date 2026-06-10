@@ -263,6 +263,15 @@ nouns:
       - id: started
         expr: epochMs(it.startTs)
 
+  - noun: execution_result_dynamic
+    short_desc: Execution result from a dynamic pipeline run.
+    fields:
+      - id: execution_id
+        label: ExecutionId
+        expr: it.execution_id
+      - id: status
+        expr: it.status
+
 commands:
   - command: get pipeline
     verb: get
@@ -328,6 +337,7 @@ commands:
       item_expr: it.data
       text_header: "\nCreated pipeline {{it.identifier}} in org [{{auth.org}}] project [{{auth.project}}]\n"
       text_footer: "{{url(it)}}\n"
+      validators_endpoint: [validate_pipeline_create]
       query_params:
         storeType: 'flags.connector != "" ? "REMOTE" : ""'
         connectorRef: flags.connector
@@ -396,6 +406,44 @@ commands:
       query_params:
         branch: flags.branch
         inputSetIdentifiers: flags["input-set"]
+
+  - command: execute pipeline:dynamic
+    verb: execute
+    noun: pipeline
+    noun_variant: dynamic
+    fields_noun: execution_result_dynamic
+    short: Execute a pipeline with a fully dynamic inline YAML definition
+    hidden: true
+    handler_type: endpoint
+    follow_fn: execute_follow
+    flags:
+      - name: file
+        short: f
+        description: "Path to the pipeline YAML to execute (use - for stdin)"
+        required: true
+      - name: notes
+        description: Notes for this execution
+      - name: module-type
+        description: Module type that triggered the execution (e.g. cd, ci)
+      - name: follow
+        is_bool: true
+        description: Stream logs live after execution starts; exits when the execution reaches a terminal state
+    endpoint:
+      method: POST
+      path: /pipeline/api/v1/orgs/{{auth.org}}/projects/{{auth.project}}/pipelines/{{ctx.id}}/execute/dynamic
+      item_expr: it.execution_details
+      text_header: "\nExecution started successfully.\n"
+      text_footer: |
+
+        To follow:
+        harness get execution {{ctx.id}}/{{it.execution_id}}
+        harness get execution_log {{ctx.id}}/{{it.execution_id}} --follow
+        harness get execution_log {{ctx.id}}/{{it.execution_id}} --ui
+
+      body_fn: execute_dynamic_body
+      query_params:
+        notes: flags.notes
+        moduleType: flags["module-type"]
 
   - command: execute pipeline:input_set
     verb: execute

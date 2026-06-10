@@ -67,6 +67,8 @@ type Request struct {
 	Method          string
 	Path            string
 	QueryParams     map[string]string
+	// Body is always fully materialized: string → sent as-is with BodyContentType;
+	// any other type → JSON-marshaled, BodyContentType defaults to "application/json".
 	Body            any
 	BodyContentType string
 	Headers         map[string]string

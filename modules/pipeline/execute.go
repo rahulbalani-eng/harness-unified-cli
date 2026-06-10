@@ -21,6 +21,7 @@ import (
 
 const executePipelineBodyFnID = "execute_body"
 const executeInputSetBodyFnID = "execute_inputset_body"
+const executeDynamicBodyFnID = "execute_dynamic_body"
 
 // executePipelineBody builds the runtimeInputYaml request body for pipeline execution.
 // --input-file <file>: use pre-filled YAML directly.
@@ -210,6 +211,20 @@ func readInputFile(path string) (string, error) {
 		return "", fmt.Errorf("--input-file is not valid YAML: %w", err)
 	}
 	return string(b), nil
+}
+
+// executeDynamicBody builds the DynamicPipelineExecuteRequestBody: {"yaml": "<pipeline yaml>"}.
+func executeDynamicBody(ctx *cmdctx.Ctx) (any, error) {
+	yamlFile := cmdctx.GetString(ctx.FlagValues, "file")
+	if yamlFile == "" {
+		return nil, fmt.Errorf("-f/--file is required for dynamic pipeline execution")
+	}
+	yamlStr, err := readInputFile(yamlFile)
+	if err != nil {
+		return nil, err
+	}
+	hlog.Debug("execute pipeline:dynamic yaml:\n" + yamlStr)
+	return map[string]any{"yaml": yamlStr}, nil
 }
 
 // executeInputSetBody builds the MergeInputSetRequest body for the /inputSetList endpoint.

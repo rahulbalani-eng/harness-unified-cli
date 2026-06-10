@@ -24,11 +24,13 @@ func ModuleInit(reg registry.ModuleRegistrar) {
 	reg.RegisterWorkflow(getPipelineLogHandlerID, getPipelineLogHandler)
 	reg.RegisterBodyFn(executePipelineBodyFnID, executePipelineBody)
 	reg.RegisterBodyFn(executeInputSetBodyFnID, executeInputSetBody)
+	reg.RegisterBodyFn(executeDynamicBodyFnID, executeDynamicBody)
 	reg.RegisterFollowFn(executeFollowFnID, executeFollowFn)
 	reg.RegisterTextFormatter("execution_detail", formatGetExecution)
 	reg.RegisterFetchFn(listExecutionStepsFetchFnID, listExecutionStepsFetchFn)
 	reg.RegisterFlagCompletionFn(pipelineLogStageCompletionID, pipelineLogStageCompletion)
 	reg.RegisterFlagCompletionFn(pipelineLogStepCompletionID, pipelineLogStepCompletion)
+	reg.RegisterEndpointValidatorFn(validatePipelineCreateID, validatePipelineCreate)
 }
 
 func formatGetExecution(w io.Writer, d cmdctx.DataAccessor) error {

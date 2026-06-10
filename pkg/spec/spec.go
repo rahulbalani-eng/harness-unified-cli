@@ -337,6 +337,10 @@ type EndpointSpec struct {
 	// BodyFn names a registered CreateBodyFn that builds the POST body instead of the
 	// default body_params / body construction. Qualified by module at registration time.
 	BodyFn string `yaml:"body_fn,omitempty"`
+	// ValidatorsEndpoint lists registered EndpointValidatorFn IDs to run after the
+	// request is built but before it is sent. Each fn receives ctx and the materialized
+	// request; return a non-nil error to abort. Qualified by module at registration time.
+	ValidatorsEndpoint []string `yaml:"validators_endpoint,omitempty"`
 	// Paging, when non-nil, enables framework-managed paging for list commands.
 	// Not allowed on any other verb. Exposes --offset, --limit, --all, and (when countable) --count.
 	Paging *PagingSpec `yaml:"paging,omitempty"`

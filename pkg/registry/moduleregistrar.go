@@ -27,6 +27,7 @@ type ModuleRegistrar interface {
 	RegisterFollowFn(shortID string, fn cmdctx.FollowFn)
 	RegisterFetchFn(shortID string, fn cmdctx.FetchFn)
 	RegisterFlagCompletionFn(shortID string, fn FlagCompletionFn)
+	RegisterEndpointValidatorFn(shortID string, fn cmdctx.EndpointValidatorFn)
 	SetHelpText(text string)
 }
 
@@ -82,6 +83,11 @@ func (m *moduleRegistrar) Register(cs *spec.CommandSpec) error {
 	if cs.Endpoint != nil && cs.Endpoint.FetchFn != "" {
 		cs.Endpoint.FetchFn = m.qualify(cs.Endpoint.FetchFn, cmd+" fetch_fn", true)
 	}
+	if cs.Endpoint != nil {
+		for i, id := range cs.Endpoint.ValidatorsEndpoint {
+			cs.Endpoint.ValidatorsEndpoint[i] = m.qualify(id, fmt.Sprintf("%s validators_endpoint[%d]", cmd, i), true)
+		}
+	}
 	for i := range cs.Flags {
 		if cs.Flags[i].CompletionFn != "" {
 			cs.Flags[i].CompletionFn = m.qualify(cs.Flags[i].CompletionFn, fmt.Sprintf("%s flag %q completion_fn", cmd, cs.Flags[i].Name), true)
@@ -123,6 +129,12 @@ func (m *moduleRegistrar) RegisterFetchFn(shortID string, fn cmdctx.FetchFn) {
 func (m *moduleRegistrar) RegisterFlagCompletionFn(shortID string, fn FlagCompletionFn) {
 	if q := m.qualify(shortID, fmt.Sprintf("flag_completion_fn %q", shortID), false); q != "" {
 		m.reg.RegisterFlagCompletionFn(q, fn)
+	}
+}
+
+func (m *moduleRegistrar) RegisterEndpointValidatorFn(shortID string, fn cmdctx.EndpointValidatorFn) {
+	if q := m.qualify(shortID, fmt.Sprintf("endpoint_validator_fn %q", shortID), false); q != "" {
+		m.reg.RegisterEndpointValidatorFn(q, fn)
 	}
 }
 

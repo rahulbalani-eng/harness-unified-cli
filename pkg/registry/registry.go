@@ -13,7 +13,6 @@ import (
 	"github.com/spf13/pflag"
 
 	"github.com/harness/harness-cli/pkg/auth"
-	"github.com/harness/harness-cli/pkg/strutil"
 	"github.com/harness/harness-cli/pkg/cmdctx"
 	"github.com/harness/harness-cli/pkg/console"
 	"github.com/harness/harness-cli/pkg/exprenv"
@@ -22,6 +21,7 @@ import (
 	"github.com/harness/harness-cli/pkg/hlog"
 	"github.com/harness/harness-cli/pkg/plugin"
 	"github.com/harness/harness-cli/pkg/spec"
+	"github.com/harness/harness-cli/pkg/strutil"
 )
 
 // Token names for use in spec.EndpointSpec fields.
@@ -43,33 +43,35 @@ type FlagCompletionFn func(a *auth.ResolvedAuth, args []string, flags *pflag.Fla
 
 // Registry holds all registered CommandSpecs and builds the cobra command tree.
 type Registry struct {
-	StrictYAML        bool // when true, loadSpecs rejects unknown YAML fields
-	IsMainBinary      bool // when true, commands owned by external modules are exec'd to their plugin binary
-	specs             map[string][]*spec.CommandSpec
-	nouns             map[string]spec.NounDef
-	nounAliases       map[string]string // alias name → canonical noun name
-	moduleMetas       []spec.ModuleMeta
-	workflows         map[string]WorkflowFn
-	textFormatters    map[string]cmdctx.TextFormatterFn
-	bodyFns           map[string]cmdctx.CreateBodyFn
-	followFns         map[string]cmdctx.FollowFn
-	fetchFns          map[string]cmdctx.FetchFn
-	flagCompletionFns map[string]FlagCompletionFn
-	initErrs          []string
+	StrictYAML           bool // when true, loadSpecs rejects unknown YAML fields
+	IsMainBinary         bool // when true, commands owned by external modules are exec'd to their plugin binary
+	specs                map[string][]*spec.CommandSpec
+	nouns                map[string]spec.NounDef
+	nounAliases          map[string]string // alias name → canonical noun name
+	moduleMetas          []spec.ModuleMeta
+	workflows            map[string]WorkflowFn
+	textFormatters       map[string]cmdctx.TextFormatterFn
+	bodyFns              map[string]cmdctx.CreateBodyFn
+	followFns            map[string]cmdctx.FollowFn
+	fetchFns             map[string]cmdctx.FetchFn
+	flagCompletionFns    map[string]FlagCompletionFn
+	endpointValidatorFns map[string]cmdctx.EndpointValidatorFn
+	initErrs             []string
 }
 
 func New() *Registry {
 	r := &Registry{
-		StrictYAML:        os.Getenv(hbase.EnvCheckSpecs) == "1",
-		specs:             map[string][]*spec.CommandSpec{},
-		nouns:             map[string]spec.NounDef{},
-		nounAliases:       map[string]string{},
-		workflows:         map[string]WorkflowFn{},
-		textFormatters:    map[string]cmdctx.TextFormatterFn{},
-		bodyFns:           map[string]cmdctx.CreateBodyFn{},
-		followFns:         map[string]cmdctx.FollowFn{},
-		fetchFns:          map[string]cmdctx.FetchFn{},
-		flagCompletionFns: map[string]FlagCompletionFn{},
+		StrictYAML:           os.Getenv(hbase.EnvCheckSpecs) == "1",
+		specs:                map[string][]*spec.CommandSpec{},
+		nouns:                map[string]spec.NounDef{},
+		nounAliases:          map[string]string{},
+		workflows:            map[string]WorkflowFn{},
+		textFormatters:       map[string]cmdctx.TextFormatterFn{},
+		bodyFns:              map[string]cmdctx.CreateBodyFn{},
+		followFns:            map[string]cmdctx.FollowFn{},
+		fetchFns:             map[string]cmdctx.FetchFn{},
+		flagCompletionFns:    map[string]FlagCompletionFn{},
+		endpointValidatorFns: map[string]cmdctx.EndpointValidatorFn{},
 	}
 	r.registerCoreFormatters()
 	return r
@@ -239,6 +241,19 @@ func (r *Registry) RegisterBodyFn(id string, fn cmdctx.CreateBodyFn) {
 		panic(fmt.Sprintf("registry: duplicate body fn %q", id))
 	}
 	r.bodyFns[id] = fn
+}
+
+// RegisterEndpointValidatorFn registers a fully-qualified endpoint validator ID.
+func (r *Registry) RegisterEndpointValidatorFn(id string, fn cmdctx.EndpointValidatorFn) {
+	if _, ok := r.endpointValidatorFns[id]; ok {
+		panic(fmt.Sprintf("registry: duplicate endpoint validator fn %q", id))
+	}
+	r.endpointValidatorFns[id] = fn
+}
+
+// ResolveEndpointValidator implements cmdctx.Resolver.
+func (r *Registry) ResolveEndpointValidator(id string) cmdctx.EndpointValidatorFn {
+	return r.endpointValidatorFns[id]
 }
 
 // RegisterFollowFn registers a fully-qualified follow function ID.

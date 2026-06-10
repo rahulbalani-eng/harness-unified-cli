@@ -84,6 +84,16 @@ func callEndpointFull(ctx *cmdctx.Ctx, ep *spec.EndpointSpec, extraQueryParams m
 			return nil, nil, err
 		}
 		ct := ep.ContentType
+		qp := evalQueryParams(ctx, ep.QueryParams, true, extraQueryParams)
+		if err := runEndpointValidators(ctx, ep, cmdctx.EndpointRequest{
+			Method:      method,
+			Path:        path,
+			QueryParams: qp,
+			Body:        body,
+			ContentType: ct,
+		}); err != nil {
+			return nil, nil, err
+		}
 		if method == "PUT" {
 			if ct == "" {
 				ct = "application/json"
@@ -93,14 +103,14 @@ func callEndpointFull(ctx *cmdctx.Ctx, ep *spec.EndpointSpec, extraQueryParams m
 				if err := json.Unmarshal([]byte(body), &parsed); err != nil {
 					return nil, nil, fmt.Errorf("parsing -f body: %w", err)
 				}
-				return c.Put(path, evalQueryParams(ctx, ep.QueryParams, true, extraQueryParams), map[string]any{ep.UpdateBodyWrap: parsed})
+				return c.Put(path, qp, map[string]any{ep.UpdateBodyWrap: parsed})
 			}
-			return c.PutRaw(path, evalQueryParams(ctx, ep.QueryParams, true, extraQueryParams), body, ct)
+			return c.PutRaw(path, qp, body, ct)
 		}
 		if ct == "" {
 			ct = "application/json"
 		}
-		return c.PostRaw(path, evalQueryParams(ctx, ep.QueryParams, true, extraQueryParams), body, ct)
+		return c.PostRaw(path, qp, body, ct)
 	}
 
 	if ep.FileBody == spec.FileBodyRequired {
@@ -615,6 +625,24 @@ func FetchRange(ctx *cmdctx.Ctx, ep *spec.EndpointSpec, offset, limit int) ([]an
 	}
 	meta.Count = len(out)
 	return out, meta, nil
+}
+
+// runEndpointValidators runs all validators_endpoint declared on ep, in order.
+// Returns the first error encountered, or nil if all pass or none are declared.
+func runEndpointValidators(ctx *cmdctx.Ctx, ep *spec.EndpointSpec, req cmdctx.EndpointRequest) error {
+	if len(ep.ValidatorsEndpoint) == 0 || ctx.Resolver == nil {
+		return nil
+	}
+	for _, id := range ep.ValidatorsEndpoint {
+		fn := ctx.Resolver.ResolveEndpointValidator(id)
+		if fn == nil {
+			return fmt.Errorf("validators_endpoint %q not registered", id)
+		}
+		if err := fn(ctx, req); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // resolveBody builds the request body, preferring body_fn, then body_params+body, returning nil if none apply.

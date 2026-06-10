@@ -49,6 +49,22 @@ type CreateBodyFn func(ctx *Ctx) (any, error)
 // result is the raw API response (same value RunEndpoint returns).
 type FollowFn func(ctx *Ctx, result any) error
 
+// EndpointValidatorFn validates a request before it is sent. Declared via
+// validators_endpoint in the spec; runs after file slurp, before the HTTP call.
+// req.Body is the fully materialized request body (string or structured value).
+type EndpointValidatorFn func(ctx *Ctx, req EndpointRequest) error
+
+// EndpointRequest is the materialized form of a pending API request passed to
+// EndpointValidatorFns. Body mirrors client.Request.Body: a string when the
+// request body came from a -f file, a map/struct for structured bodies, or nil.
+type EndpointRequest struct {
+	Method      string
+	Path        string
+	QueryParams map[string]string
+	Body        any
+	ContentType string
+}
+
 // PageResult is returned by a FetchFn for one logical page of results.
 type PageResult struct {
 	Raw         any
@@ -79,6 +95,7 @@ type Resolver interface {
 	ResolveTextFormatter(id string) TextFormatterFn
 	ResolveBodyFn(id string) CreateBodyFn
 	ResolveFetchFn(id string) (FetchFn, error)
+	ResolveEndpointValidator(id string) EndpointValidatorFn
 	GetSpec(verb, noun string) *spec.CommandSpec
 	GetNoun(noun string) *spec.NounDef
 	RunEndpoint(ctx *Ctx, ep *spec.EndpointSpec) (any, error)

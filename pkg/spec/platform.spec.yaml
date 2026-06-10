@@ -340,6 +340,15 @@ nouns:
         expr: epochMs(it.status.lastConnectedAt)
         field_type: ts
 
+  - noun: connector_test
+    short_desc: Result of a connector connectivity test.
+    fields:
+      - id: status
+        expr: it.status
+      - id: errorSummary
+        label: Error Summary
+        expr: it.errorSummary
+
   - noun: delegate
     short_desc: An agent installed in your infrastructure that executes pipeline tasks on Harness's behalf.
     noun_aliases: [delegates]
@@ -946,6 +955,19 @@ commands:
     handler_type: endpoint
     endpoint:
       path: /ng/api/connectors/{{ctx.id}}
+      item_expr: it.data
+
+  - command: execute connector:test
+    verb: execute
+    noun: connector
+    noun_variant: test
+    short: "Test connectivity for a connector: harness execute connector:test <connector_id>"
+    completion_noun: connector
+    fields_noun: connector_test
+    handler_type: endpoint
+    endpoint:
+      method: POST
+      path: /ng/api/connectors/testConnection/{{ctx.id}}
       item_expr: it.data
 
   - command: list secret

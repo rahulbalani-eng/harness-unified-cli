@@ -126,6 +126,8 @@ commands:
     noun_variant: related_type
     short: "List types related to a source type: harness list kg:related_type <type_id> [--kind OBJECT_KIND_ENTITY]"
     handler_type: endpoint
+    requires_parentid: true
+    parentid_label: "<type_id>"
     flags:
       - name: kind
         description: "Object kind of the source type (default: OBJECT_KIND_ENTITY)"
@@ -141,12 +143,13 @@ commands:
         x-tenant-id: auth.account
       body_params:
         type_reference.object_kind: flags.kind
-        type_reference.id: ctx.id
+        type_reference.id: ctx.parentId
         include_transitive: flags.transitive
       items_expr: it.related_types
+      item_item_expr: it.entity_type ?? it.event_type ?? it.metric_type ?? it.view_type ?? it.relationship_type ?? it.config_type ?? it
       paging:
         paging_strategy: flat_list
-      columns: [id, name, relationship, direction]
+      columns: [id, kind, name, field_count]
 
   # ── kg:connection ─────────────────────────────────────────────────────────────
 

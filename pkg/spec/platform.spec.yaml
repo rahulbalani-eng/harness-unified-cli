@@ -331,6 +331,14 @@ nouns:
         expr: it.connector.name
       - id: type
         expr: it.connector.type
+      - id: description
+        expr: it.connector.description
+      - id: status
+        expr: it.status.status
+      - id: last_connected_at
+        label: Last Connected
+        expr: epochMs(it.status.lastConnectedAt)
+        field_type: ts
 
   - noun: delegate
     short_desc: An agent installed in your infrastructure that executes pipeline tasks on Harness's behalf.
@@ -911,7 +919,7 @@ commands:
       method: POST
       path: /ng/api/connectors/listV2
       items_expr: it.data.content
-      columns: [identifier, name, type, status]
+      columns: [identifier, name, type, status, last_connected_at]
       get_id_expr: it.connector.identifier
       completion:
         id_expr: it.connector.identifier

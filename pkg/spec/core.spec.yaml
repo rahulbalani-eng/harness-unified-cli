@@ -4,6 +4,7 @@ module_desc: Core CLI commands (auth, install, version)
 
 nouns:
   - noun: profiles
+    noun_aliases: [profile]
     short_desc: An authentication profile with credentials and scope.
     fields:
       - id: profile

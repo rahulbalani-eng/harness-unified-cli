@@ -93,9 +93,9 @@ func TestEvalItemsExpr(t *testing.T) {
 func TestEvalItemsExpr_Concat(t *testing.T) {
 	env := map[string]any{
 		"it": map[string]any{
-			"entity_types":   []any{"e1", "e2"},
-			"event_types":    []any{"ev1"},
-			"config_types":   nil,
+			"entity_types": []any{"e1", "e2"},
+			"event_types":  []any{"ev1"},
+			"config_types": nil,
 		},
 		"concat": func(args ...[]any) []any {
 			var out []any

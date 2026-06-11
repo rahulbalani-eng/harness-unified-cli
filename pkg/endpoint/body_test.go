@@ -68,7 +68,7 @@ func TestBuildBody_NilSkipped(t *testing.T) {
 	// This is the pattern used for optional params like options.timeout_ms.
 	ep := &spec.EndpointSpec{
 		BodyParams: map[string]string{
-			"query_string":      `"find entity"`,
+			"query_string":       `"find entity"`,
 			"options.timeout_ms": `nil`,
 		},
 	}

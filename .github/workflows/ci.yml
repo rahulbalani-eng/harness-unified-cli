@@ -23,8 +23,10 @@ jobs:
         with:
           version: 3.x
 
-      - name: go vet
-        run: go vet ./...
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest
 
       - name: Unit tests
         run: go test ./... -race -count=1

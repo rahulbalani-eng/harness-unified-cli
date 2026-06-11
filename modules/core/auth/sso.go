@@ -1,0 +1,437 @@
+// Copyright © 2026 Harness Inc.
+// SPDX-License-Identifier: Apache-2.0
+
+package auth
+
+import (
+	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"net/url"
+	"os"
+	"strings"
+	"time"
+
+	"github.com/harness/harness-cli/pkg/auth"
+	"github.com/harness/harness-cli/pkg/client"
+	"github.com/harness/harness-cli/pkg/cmdctx"
+	"github.com/harness/harness-cli/pkg/console"
+	"github.com/harness/harness-cli/pkg/hlog"
+)
+
+const (
+	mcpBaseURL         = "https://mcp.harness.io"
+	ssoAuthServerBase  = "https://id.harness.io"
+	ssoMetadataPath    = "/.well-known/oauth-authorization-server"
+	ssoCallbackPath    = "/oauth/callback"
+	ssoClientID        = "harness-cli-client"
+	ssoPort            = 57380
+	ssoDiscoverTimeout = 10 * time.Second
+	ssoTokenTimeout    = 30 * time.Second
+	ssoCallbackTimeout = 5 * time.Minute
+)
+
+// LoginSSOHandler implements `harness auth loginsso`.
+// It performs the full OAuth2 PKCE flow via browser:
+//  1. Fetch authorization server metadata from id.harness.io
+//  2. Launch browser with PKCE authorization URL + local callback server on port 57380
+//  3. Exchange code for token, extract account ID from JWT claims
+//  4. Drop into existing org/project picker wizard, then save profile
+func LoginSSOHandler(ctx *cmdctx.Ctx) error {
+	overwrite := cmdctx.GetBool(ctx.FlagValues, "overwrite")
+	noOverwrite := cmdctx.GetBool(ctx.FlagValues, "no-overwrite")
+	if overwrite && noOverwrite {
+		return fmt.Errorf("--overwrite and --no-overwrite are mutually exclusive")
+	}
+
+	profileName := cmdctx.GetString(ctx.FlagValues, "profile")
+	if profileName == "" {
+		profileName = "default"
+	}
+	if !profileNameRe.MatchString(profileName) {
+		return fmt.Errorf("invalid profile name %q: must match ^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$", profileName)
+	}
+
+	cfg, err := auth.LoadConfig()
+	if err != nil {
+		return err
+	}
+	if _, exists := cfg.Profiles[profileName]; exists {
+		switch {
+		case noOverwrite:
+			return fmt.Errorf("profile %q already exists (use --overwrite to replace it)", profileName)
+		case !overwrite:
+			fmt.Fprintf(os.Stderr, "WARNING: profile %q already exists, continuing will overwrite it\n\n", profileName)
+			if !console.PromptYesNo("Overwrite?") {
+				return fmt.Errorf("canceled by user — config not written")
+			}
+			fmt.Fprintln(os.Stderr)
+		}
+	}
+
+	meta, err := fetchAuthServerMeta(&http.Client{Timeout: ssoDiscoverTimeout}, ssoAuthServerBase)
+	if err != nil {
+		return fmt.Errorf("SSO discovery failed: %w", err)
+	}
+
+	token, refreshToken, accountID, subdomain, err := runPKCEFlow(meta)
+	if err != nil {
+		return fmt.Errorf("SSO login failed: %w", err)
+	}
+
+	apiURL, err := resolveAPIURL(token, accountID, subdomain)
+	if err != nil {
+		return err
+	}
+
+	// Reuse the existing set-wizard to pick org/project.
+	var orgID, projectID string
+	if console.IsBothTTY() {
+		result, werr := RunSetWizard(ctx, &SetWizardInput{
+			APIURL:    apiURL,
+			Token:     token,
+			AccountID: accountID,
+		})
+		if werr != nil {
+			return werr
+		}
+		if result == nil {
+			return fmt.Errorf("canceled by user — config not written")
+		}
+		orgID = result.OrgID
+		projectID = result.Project
+	}
+
+	cfg.Profiles[profileName] = &auth.Profile{
+		APIUrl:    apiURL,
+		AccountID: accountID,
+		OrgID:     orgID,
+		ProjectID: projectID,
+		AuthType:  auth.AuthTypeSSO,
+	}
+	if err := auth.SaveConfig(cfg); err != nil {
+		return fmt.Errorf("saving profile: %w", err)
+	}
+	if err := auth.SetSSOCredentials(profileName, token, refreshToken); err != nil {
+		return fmt.Errorf("saving credentials: %w", err)
+	}
+
+	fmt.Printf("Logged in via SSO. Profile %q written.\n\n", profileName)
+	printStatus(runStatusChecks(profileName))
+	return nil
+}
+
+// resolveAPIURL determines the Harness REST API base URL for the account.
+// It prefers the subdomain from the JWT (e.g. "prod2.harness.io"), falls back
+// to mcp.harness.io, then verifies the URL works. If verification fails and
+// we're on a TTY, it prompts the user to enter the URL manually.
+func resolveAPIURL(token, accountID, subdomain string) (string, error) {
+	candidate := mcpBaseURL
+	if subdomain != "" {
+		candidate = "https://" + subdomain
+	}
+	hlog.Debug("resolveAPIURL", "candidate", candidate, "subdomain", subdomain)
+
+	resolved := &auth.ResolvedAuth{
+		APIUrl:    candidate,
+		SSOToken:  token,
+		AccountID: accountID,
+		AuthType:  auth.AuthTypeSSO,
+	}
+	c := client.New(context.Background(), resolved)
+	_, _, err := c.Get("/ng/api/user/currentUser", nil)
+	hlog.Debug("resolveAPIURL currentUser check", "url", candidate, "err", err)
+	if err == nil {
+		return candidate, nil
+	}
+
+	if console.IsBothTTY() {
+		fmt.Fprintf(os.Stderr, "Could not reach %s — please enter your Harness API URL\n", candidate)
+		apiURL, err := console.ReadPrompt("API URL", "https://app.harness.io")
+		if err != nil {
+			return "", err
+		}
+		return apiURL, nil
+	}
+	return "", fmt.Errorf("could not reach %s — re-run with --api-url to specify the URL manually", candidate)
+}
+
+// --- discovery ---
+
+type authServerMeta struct {
+	Issuer                string `json:"issuer"`
+	AuthorizationEndpoint string `json:"authorization_endpoint"`
+	TokenEndpoint         string `json:"token_endpoint"`
+	RegistrationEndpoint  string `json:"registration_endpoint"`
+}
+
+func fetchAuthServerMeta(c *http.Client, authServerBaseURL string) (*authServerMeta, error) {
+	metaURL := authServerBaseURL + ssoMetadataPath
+	resp, err := c.Get(metaURL)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("HTTP %d from %s", resp.StatusCode, metaURL)
+	}
+	var meta authServerMeta
+	if err := json.Unmarshal(body, &meta); err != nil {
+		return nil, fmt.Errorf("parsing authorization server metadata: %w", err)
+	}
+	if meta.AuthorizationEndpoint == "" || meta.TokenEndpoint == "" {
+		return nil, fmt.Errorf("authorization server metadata missing required endpoints")
+	}
+	// If the issuer is a sub-path (e.g. a Keycloak realm), re-fetch metadata from
+	// the issuer's own discovery doc so we get the real realm endpoints.
+	if meta.Issuer != "" && meta.Issuer != authServerBaseURL {
+		return fetchAuthServerMeta(c, meta.Issuer)
+	}
+	return &meta, nil
+}
+
+// --- PKCE flow ---
+
+func runPKCEFlow(meta *authServerMeta) (token, refreshToken, accountID, subdomain string, err error) {
+	// Generate PKCE verifier + challenge
+	verifier, err := generateCodeVerifier()
+	if err != nil {
+		return "", "", "", "", fmt.Errorf("generating PKCE verifier: %w", err)
+	}
+	challenge := codeChallenge(verifier)
+
+	state, err := randomState()
+	if err != nil {
+		return "", "", "", "", err
+	}
+
+	redirectURI := fmt.Sprintf("http://localhost:%d%s", ssoPort, ssoCallbackPath)
+	ln, err := net.Listen("tcp", fmt.Sprintf("localhost:%d", ssoPort))
+	if err != nil {
+		return "", "", "", "", fmt.Errorf("starting local callback server on port %d: %w", ssoPort, err)
+	}
+
+	authURL := buildAuthURL(meta.AuthorizationEndpoint, ssoClientID, redirectURI, challenge, state)
+	fmt.Fprintf(os.Stderr, "\nOpening browser for SSO login…\n%s\n\n", authURL)
+	_ = console.OpenBrowser(authURL)
+
+	code, err := waitForCallback(ln, state)
+	if err != nil {
+		return "", "", "", "", fmt.Errorf("callback failed: %w", err)
+	}
+
+	rawToken, rawRefreshToken, err := exchangeCode(meta.TokenEndpoint, ssoClientID, code, verifier, redirectURI)
+	if err != nil {
+		return "", "", "", "", fmt.Errorf("token exchange failed: %w", err)
+	}
+
+	claims, err := parseJWT(rawToken)
+	if err != nil {
+		return "", "", "", "", fmt.Errorf("extracting claims from token: %w", err)
+	}
+
+	return rawToken, rawRefreshToken, claims.AccountID, claims.Subdomain, nil
+}
+
+func buildAuthURL(endpoint, clientID, redirectURI, challenge, state string) string {
+	params := url.Values{}
+	params.Set("response_type", "code")
+	params.Set("client_id", clientID)
+	params.Set("redirect_uri", redirectURI)
+	params.Set("code_challenge", challenge)
+	params.Set("code_challenge_method", "S256")
+	params.Set("state", state)
+	params.Set("scope", "openid profile email")
+	return endpoint + "?" + params.Encode()
+}
+
+// waitForCallback runs a one-shot HTTP server on ln, waits for the OAuth callback,
+// and returns the authorization code.
+func waitForCallback(ln net.Listener, expectedState string) (string, error) {
+	codeCh := make(chan string, 1)
+	errCh := make(chan error, 1)
+
+	srv := &http.Server{ReadHeaderTimeout: 10 * time.Second}
+	srv.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != ssoCallbackPath {
+			http.NotFound(w, r)
+			return
+		}
+		q := r.URL.Query()
+		if errParam := q.Get("error"); errParam != "" {
+			desc := q.Get("error_description")
+			fmt.Fprintf(w, "<html><body><h2>Login failed: %s</h2><p>%s</p><p>You may close this tab.</p></body></html>", errParam, desc)
+			errCh <- fmt.Errorf("authorization error: %s — %s", errParam, desc)
+			return
+		}
+		if q.Get("state") != expectedState {
+			http.Error(w, "invalid state", http.StatusBadRequest)
+			errCh <- fmt.Errorf("state mismatch — possible CSRF")
+			return
+		}
+		code := q.Get("code")
+		if code == "" {
+			http.Error(w, "missing code", http.StatusBadRequest)
+			errCh <- fmt.Errorf("no authorization code in callback")
+			return
+		}
+		fmt.Fprintf(w, "<html><body><h2>Login successful!</h2><p>You may close this tab and return to your terminal.</p></body></html>")
+		codeCh <- code
+	})
+
+	go func() {
+		if serveErr := srv.Serve(ln); serveErr != nil && serveErr != http.ErrServerClosed {
+			errCh <- serveErr
+		}
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), ssoCallbackTimeout)
+	defer cancel()
+
+	var code string
+	shutdown := func() {
+		shutCtx, shutCancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer shutCancel()
+		srv.Shutdown(shutCtx) //nolint:errcheck
+	}
+
+	select {
+	case code = <-codeCh:
+		shutdown()
+		return code, nil
+	case err := <-errCh:
+		shutdown()
+		return "", err
+	case <-ctx.Done():
+		shutdown()
+		return "", fmt.Errorf("timed out waiting for browser login (%.0f min)", ssoCallbackTimeout.Minutes())
+	}
+}
+
+func exchangeCode(tokenEndpoint, clientID, code, verifier, redirectURI string) (accessToken, refreshToken string, err error) {
+	params := url.Values{}
+	params.Set("grant_type", "authorization_code")
+	params.Set("code", code)
+	params.Set("redirect_uri", redirectURI)
+	params.Set("client_id", clientID)
+	params.Set("code_verifier", verifier)
+
+	c := &http.Client{Timeout: ssoTokenTimeout}
+	resp, err := c.Post(tokenEndpoint, "application/x-www-form-urlencoded", strings.NewReader(params.Encode()))
+	if err != nil {
+		return "", "", err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 200 {
+		return "", "", fmt.Errorf("HTTP %d: %s", resp.StatusCode, truncate(string(body), 200))
+	}
+
+	var tok struct {
+		AccessToken  string `json:"access_token"`
+		RefreshToken string `json:"refresh_token"`
+		Error        string `json:"error"`
+		ErrorDesc    string `json:"error_description"`
+	}
+	if err := json.Unmarshal(body, &tok); err != nil {
+		return "", "", fmt.Errorf("parsing token response: %w", err)
+	}
+	if tok.Error != "" {
+		return "", "", fmt.Errorf("%s: %s", tok.Error, tok.ErrorDesc)
+	}
+	if tok.AccessToken == "" {
+		return "", "", fmt.Errorf("token response missing access_token")
+	}
+
+	hlog.Debug("token exchange", "has_refresh_token", tok.RefreshToken != "")
+	return tok.AccessToken, tok.RefreshToken, nil
+}
+
+type jwtClaims struct {
+	AccountID string // from account_id claim
+	Subdomain string // from account_metadata.<accountId>.subdomain (may be empty)
+}
+
+// parseJWT extracts claims from the JWT payload (no signature verification —
+// the server will reject an invalid token; this is just for local display/storage).
+//
+// Confirmed claims from id.harness.io/idp/realms/HarnessIDP:
+//
+//	account_id          — Harness account ID
+//	email               — user email
+//	name / given_name   — display name
+//	preferred_username  — login username
+//	sub                 — Keycloak user UUID (not the Harness account ID)
+//	scope               — includes "organization:<accountId>" as well
+//	account_metadata.<accountId>.subdomain   — vanity subdomain (e.g. "prod2.harness.io"), may be empty during platform transition
+//	account_metadata.<accountId>.clusterId   — e.g. "prod2"
+//	account_metadata.<accountId>.accountName — human-readable account name
+func parseJWT(rawToken string) (*jwtClaims, error) {
+	parts := strings.Split(rawToken, ".")
+	if len(parts) != 3 {
+		return nil, fmt.Errorf("not a JWT (expected 3 segments)")
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return nil, fmt.Errorf("decoding JWT payload: %w", err)
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(payload, &raw); err != nil {
+		return nil, fmt.Errorf("parsing JWT claims: %w", err)
+	}
+	hlog.Debug("JWT claims", "payload", string(payload))
+
+	var accountID string
+	for _, key := range []string{"accountID", "account_id", "accountId"} {
+		if v, ok := raw[key]; ok {
+			if s, ok := v.(string); ok && s != "" {
+				accountID = s
+				break
+			}
+		}
+	}
+	if accountID == "" {
+		return nil, fmt.Errorf("JWT does not contain an accountID claim — contact your Harness administrator")
+	}
+
+	var subdomain string
+	if meta, ok := raw["account_metadata"].(map[string]any); ok {
+		if acctMeta, ok := meta[accountID].(map[string]any); ok {
+			if vals, ok := acctMeta["subdomain"].([]any); ok && len(vals) > 0 {
+				subdomain, _ = vals[0].(string)
+			}
+		}
+	}
+
+	return &jwtClaims{AccountID: accountID, Subdomain: subdomain}, nil
+}
+
+// --- PKCE helpers ---
+
+func generateCodeVerifier() (string, error) {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(b), nil
+}
+
+func codeChallenge(verifier string) string {
+	h := sha256.Sum256([]byte(verifier))
+	return base64.RawURLEncoding.EncodeToString(h[:])
+}
+
+func randomState() (string, error) {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(b), nil
+}

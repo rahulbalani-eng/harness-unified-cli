@@ -660,7 +660,7 @@ func fetchOrgItems(ctx *cmdctx.Ctx, apiURL, token, accountID string) ([]orgItem,
 			fetchCtx.Noun = "organization"
 			fetchCtx.Auth = &pkgauth.ResolvedAuth{
 				APIUrl:    apiURL,
-				Token:     token,
+				PATToken:  token,
 				AccountID: accountID,
 			}
 			items, err := ctx.Resolver.FetchItems(&fetchCtx, cs.Endpoint, cmdctx.PagingFlags{All: true})
@@ -684,7 +684,7 @@ func fetchProjectItems(ctx *cmdctx.Ctx, apiURL, token, accountID, orgID string) 
 			fetchCtx.Noun = "project"
 			fetchCtx.Auth = &pkgauth.ResolvedAuth{
 				APIUrl:    apiURL,
-				Token:     token,
+				PATToken:  token,
 				AccountID: accountID,
 				OrgID:     orgID,
 			}

@@ -155,7 +155,8 @@ type FieldDef struct {
 	// When absent, Path is used as the display expression. "it" is bound to the full item.
 	FormatExpr string `yaml:"format_expr,omitempty"`
 	// FieldType optionally changes how the value is rendered or updated.
-	// Supported: "yaml" (renders raw block), "tags" (tag-map handling), "set" (string-set handling), "ts" (epoch-ms timestamp).
+	// Supported: "multiline_text" (renders raw block below other fields), "yaml" (alias for multiline_text, use for actual YAML content),
+	// "tags" (tag-map handling), "set" (string-set handling), "ts" (epoch-ms timestamp).
 	FieldType string `yaml:"field_type,omitempty"`
 	// Align controls horizontal alignment in the table renderer.
 	// Supported: "right". Empty means left (default).

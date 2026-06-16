@@ -27,6 +27,7 @@ nouns:
         expr: it.identifier
       - id: description
         expr: it.description
+        field_type: multiline_text
       - id: default_branch
         expr: it.default_branch
       - id: is_public
@@ -80,6 +81,7 @@ nouns:
         expr: it.title
       - id: description
         expr: it.description
+        field_type: multiline_text
       - id: state
         expr: it.state
       - id: is_draft
@@ -220,7 +222,7 @@ nouns:
     fields:
       - id: id
         label: ID
-        expr: string(it.id)
+        expr: int(it.id)
       - id: order
         expr: formatOrder(it.order, it.sub_order)
         align: right
@@ -231,7 +233,7 @@ nouns:
       - id: status
         expr: it.status
       - id: parent_id
-        expr: string(it.parent_id)
+        expr: int(it.parent_id)
       - id: created
         expr: epochMs(it.created)
       - id: updated
@@ -243,7 +245,7 @@ nouns:
     fields:
       - id: id
         label: ID
-        expr: string(it.id)
+        expr: int(it.id)
       - id: kind
         expr: it.kind
       - id: type
@@ -400,7 +402,7 @@ commands:
     endpoint:
       path: /code/api/v1/repos/{{ctx.idParts[0]}}/pullreq/{{ctx.idParts[1]}}
       item_expr: it
-      text_footer: "{{url(it)}}\n"
+      text_footer: "\n{{url(it)}}\n"
 
   - command: create pr
     verb: create

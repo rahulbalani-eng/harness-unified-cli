@@ -278,7 +278,7 @@ func BuildTextFieldFormatter(fields []spec.FieldDef, header, footer string, inte
 			items := make([]LabeledValue, 0, len(fields))
 			var yamlBlocks []string
 			for _, f := range fields {
-				if f.FieldType == "yaml" {
+				if f.FieldType == "multiline_text" || f.FieldType == "yaml" {
 					yamlBlocks = append(yamlBlocks, d.GetString(f.DisplayExpr()))
 					continue
 				}

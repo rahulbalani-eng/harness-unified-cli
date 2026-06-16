@@ -128,6 +128,10 @@ func (c *Client) PutRaw(path string, queryParams map[string]string, body, conten
 // If Body is a string, it is sent as-is using BodyContentType. Otherwise Body is JSON-marshaled and
 // BodyContentType defaults to "application/json". Extra per-request headers may be set via Headers.
 func (c *Client) DoRequest(r Request) (any, http.Header, error) {
+	if err := auth.CheckAndUpdateAccessToken(c.resolved, time.Now()); err != nil {
+		return nil, nil, err
+	}
+
 	u, err := url.Parse(c.resolved.APIUrl + r.Path)
 	if err != nil {
 		return nil, nil, fmt.Errorf("building URL: %w", err)

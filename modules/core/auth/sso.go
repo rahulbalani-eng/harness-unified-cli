@@ -5,12 +5,9 @@ package auth
 
 import (
 	"context"
-	"crypto/rand"
-	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -27,13 +24,8 @@ import (
 
 const (
 	mcpBaseURL         = "https://mcp.harness.io"
-	ssoAuthServerBase  = "https://id.harness.io"
-	ssoMetadataPath    = "/.well-known/oauth-authorization-server"
 	ssoCallbackPath    = "/oauth/callback"
-	ssoClientID        = "harness-cli-client"
 	ssoPort            = 57380
-	ssoDiscoverTimeout = 10 * time.Second
-	ssoTokenTimeout    = 30 * time.Second
 	ssoCallbackTimeout = 5 * time.Minute
 )
 
@@ -75,7 +67,7 @@ func LoginSSOHandler(ctx *cmdctx.Ctx) error {
 		}
 	}
 
-	meta, err := fetchAuthServerMeta(&http.Client{Timeout: ssoDiscoverTimeout}, ssoAuthServerBase)
+	meta, err := auth.FetchAuthServerMeta(&http.Client{Timeout: 10 * time.Second}, auth.SSOAuthServerBase)
 	if err != nil {
 		return fmt.Errorf("SSO discovery failed: %w", err)
 	}
@@ -162,52 +154,16 @@ func resolveAPIURL(token, accountID, subdomain string) (string, error) {
 	return "", fmt.Errorf("could not reach %s — re-run with --api-url to specify the URL manually", candidate)
 }
 
-// --- discovery ---
-
-type authServerMeta struct {
-	Issuer                string `json:"issuer"`
-	AuthorizationEndpoint string `json:"authorization_endpoint"`
-	TokenEndpoint         string `json:"token_endpoint"`
-	RegistrationEndpoint  string `json:"registration_endpoint"`
-}
-
-func fetchAuthServerMeta(c *http.Client, authServerBaseURL string) (*authServerMeta, error) {
-	metaURL := authServerBaseURL + ssoMetadataPath
-	resp, err := c.Get(metaURL)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("HTTP %d from %s", resp.StatusCode, metaURL)
-	}
-	var meta authServerMeta
-	if err := json.Unmarshal(body, &meta); err != nil {
-		return nil, fmt.Errorf("parsing authorization server metadata: %w", err)
-	}
-	if meta.AuthorizationEndpoint == "" || meta.TokenEndpoint == "" {
-		return nil, fmt.Errorf("authorization server metadata missing required endpoints")
-	}
-	// If the issuer is a sub-path (e.g. a Keycloak realm), re-fetch metadata from
-	// the issuer's own discovery doc so we get the real realm endpoints.
-	if meta.Issuer != "" && meta.Issuer != authServerBaseURL {
-		return fetchAuthServerMeta(c, meta.Issuer)
-	}
-	return &meta, nil
-}
-
 // --- PKCE flow ---
 
-func runPKCEFlow(meta *authServerMeta) (token, refreshToken, accountID, subdomain string, err error) {
-	// Generate PKCE verifier + challenge
-	verifier, err := generateCodeVerifier()
+func runPKCEFlow(meta *auth.AuthServerMeta) (token, refreshToken, accountID, subdomain string, err error) {
+	verifier, err := auth.GenerateCodeVerifier()
 	if err != nil {
 		return "", "", "", "", fmt.Errorf("generating PKCE verifier: %w", err)
 	}
-	challenge := codeChallenge(verifier)
+	challenge := auth.CodeChallenge(verifier)
 
-	state, err := randomState()
+	state, err := auth.RandomState()
 	if err != nil {
 		return "", "", "", "", err
 	}
@@ -218,7 +174,7 @@ func runPKCEFlow(meta *authServerMeta) (token, refreshToken, accountID, subdomai
 		return "", "", "", "", fmt.Errorf("starting local callback server on port %d: %w", ssoPort, err)
 	}
 
-	authURL := buildAuthURL(meta.AuthorizationEndpoint, ssoClientID, redirectURI, challenge, state)
+	authURL := buildAuthURL(meta.AuthorizationEndpoint, auth.SSOClientID, redirectURI, challenge, state)
 	fmt.Fprintf(os.Stderr, "\nOpening browser for SSO login…\n%s\n\n", authURL)
 	_ = console.OpenBrowser(authURL)
 
@@ -227,7 +183,7 @@ func runPKCEFlow(meta *authServerMeta) (token, refreshToken, accountID, subdomai
 		return "", "", "", "", fmt.Errorf("callback failed: %w", err)
 	}
 
-	rawToken, rawRefreshToken, err := exchangeCode(meta.TokenEndpoint, ssoClientID, code, verifier, redirectURI)
+	rawToken, rawRefreshToken, err := auth.ExchangeCode(meta.TokenEndpoint, auth.SSOClientID, code, verifier, redirectURI)
 	if err != nil {
 		return "", "", "", "", fmt.Errorf("token exchange failed: %w", err)
 	}
@@ -295,7 +251,6 @@ func waitForCallback(ln net.Listener, expectedState string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), ssoCallbackTimeout)
 	defer cancel()
 
-	var code string
 	shutdown := func() {
 		shutCtx, shutCancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer shutCancel()
@@ -303,7 +258,7 @@ func waitForCallback(ln net.Listener, expectedState string) (string, error) {
 	}
 
 	select {
-	case code = <-codeCh:
+	case code := <-codeCh:
 		shutdown()
 		return code, nil
 	case err := <-errCh:
@@ -313,45 +268,6 @@ func waitForCallback(ln net.Listener, expectedState string) (string, error) {
 		shutdown()
 		return "", fmt.Errorf("timed out waiting for browser login (%.0f min)", ssoCallbackTimeout.Minutes())
 	}
-}
-
-func exchangeCode(tokenEndpoint, clientID, code, verifier, redirectURI string) (accessToken, refreshToken string, err error) {
-	params := url.Values{}
-	params.Set("grant_type", "authorization_code")
-	params.Set("code", code)
-	params.Set("redirect_uri", redirectURI)
-	params.Set("client_id", clientID)
-	params.Set("code_verifier", verifier)
-
-	c := &http.Client{Timeout: ssoTokenTimeout}
-	resp, err := c.Post(tokenEndpoint, "application/x-www-form-urlencoded", strings.NewReader(params.Encode()))
-	if err != nil {
-		return "", "", err
-	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != 200 {
-		return "", "", fmt.Errorf("HTTP %d: %s", resp.StatusCode, truncate(string(body), 200))
-	}
-
-	var tok struct {
-		AccessToken  string `json:"access_token"`
-		RefreshToken string `json:"refresh_token"`
-		Error        string `json:"error"`
-		ErrorDesc    string `json:"error_description"`
-	}
-	if err := json.Unmarshal(body, &tok); err != nil {
-		return "", "", fmt.Errorf("parsing token response: %w", err)
-	}
-	if tok.Error != "" {
-		return "", "", fmt.Errorf("%s: %s", tok.Error, tok.ErrorDesc)
-	}
-	if tok.AccessToken == "" {
-		return "", "", fmt.Errorf("token response missing access_token")
-	}
-
-	hlog.Debug("token exchange", "has_refresh_token", tok.RefreshToken != "")
-	return tok.AccessToken, tok.RefreshToken, nil
 }
 
 type jwtClaims struct {
@@ -411,27 +327,4 @@ func parseJWT(rawToken string) (*jwtClaims, error) {
 	}
 
 	return &jwtClaims{AccountID: accountID, Subdomain: subdomain}, nil
-}
-
-// --- PKCE helpers ---
-
-func generateCodeVerifier() (string, error) {
-	b := make([]byte, 32)
-	if _, err := rand.Read(b); err != nil {
-		return "", err
-	}
-	return base64.RawURLEncoding.EncodeToString(b), nil
-}
-
-func codeChallenge(verifier string) string {
-	h := sha256.Sum256([]byte(verifier))
-	return base64.RawURLEncoding.EncodeToString(h[:])
-}
-
-func randomState() (string, error) {
-	b := make([]byte, 16)
-	if _, err := rand.Read(b); err != nil {
-		return "", err
-	}
-	return base64.RawURLEncoding.EncodeToString(b), nil
 }

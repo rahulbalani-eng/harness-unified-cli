@@ -622,10 +622,10 @@ commands:
   - command: get execution_log
     verb: get
     noun: execution_log
-    short: Fetch logs for a log key; use <pipeline/execId> or append / to fetch all logs under a prefix
+    short: Fetch logs for a pipeline execution
     requires_id: true
     id_allow_slash: true
-    id_label: "<pipeline/execId[/key]>"
+    id_label: "<[pipeline/]execId>"
     completion_seq:
       - completion_noun: pipeline
       - completion_noun: execution
@@ -641,18 +641,16 @@ commands:
       - name: step
         description: Filter to a specific step within --stage (requires --stage)
         completion_fn: pipeline_log_step_completion
-      - name: no-header
-        is_bool: true
-        description: Suppress the "== key ==" section headers in multi-log output
+      - name: logkey-prefix
+        description: Only show logs whose key starts with this string (use 'list execution_log' to find keys)
+      - name: logkey
+        description: Show logs for exactly this log key (use 'list execution_log' to find keys)
       - name: follow
         is_bool: true
         description: Stream logs live; exits when the execution reaches a terminal state
-      - name: prefix
-        is_bool: true
-        description: "In --follow multi-source mode: prefix each log line with [source] instead of switching markers"
-      - name: no-events
-        is_bool: true
-        description: "In --follow mode: suppress start/end events; emit only log content"
+      - name: format-multi
+        default: markers
+        description: "How sources are shown when multiple logs are displayed: markers (==> source + events) or inline ([source] per line)"
 
   - command: list trigger
     verb: list

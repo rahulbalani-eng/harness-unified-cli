@@ -27,7 +27,12 @@ const pipelineLogStepCompletionID = "pipeline_log_step_completion"
 
 func getPipelineLogHandler(ctx *cmdctx.Ctx) error {
 	if ctx.Id == "" {
-		return fmt.Errorf("missing required argument <log-key>")
+		return fmt.Errorf("missing required argument <[pipeline/]execId>")
+	}
+
+	execId := logstream.ExecIdFromArg([]string{ctx.Id})
+	if execId == "" {
+		return fmt.Errorf("could not parse execId from %q", ctx.Id)
 	}
 
 	if cmdctx.GetBool(ctx.FlagValues, "ui") {
@@ -39,30 +44,9 @@ func getPipelineLogHandler(ctx *cmdctx.Ctx) error {
 		if stg != "" || stp != "" {
 			return fmt.Errorf("--ui is not compatible with --stage or --step")
 		}
-		clean := strings.TrimRight(ctx.Id, "/")
-		if strings.Count(clean, "/") > 1 {
-			return fmt.Errorf("--ui requires <[pipeline/]execId> format, not a full log key")
-		}
 		hc := &http.Client{Timeout: 30 * time.Second}
 		return RunLogViewer(execLabelFromID(ctx.Id), hc, ctx.Auth)
 	}
-
-	if cmdctx.GetBool(ctx.FlagValues, "follow") {
-		hc := &http.Client{Timeout: 90 * time.Minute}
-		stageFlag := cmdctx.GetString(ctx.FlagValues, "stage")
-		stepFlag := cmdctx.GetString(ctx.FlagValues, "step")
-		clean := strings.TrimRight(ctx.Id, "/")
-		parts := strings.SplitN(clean, "/", 4)
-		if len(parts) <= 3 || stageFlag != "" || stepFlag != "" {
-			execId := logstream.ExecIdFromArg([]string{ctx.Id})
-			return logstream.FollowMulti(ctx, hc, execId, stageFlag, stepFlag, nil)
-		}
-		return logstream.FollowLog(ctx, hc, clean)
-	}
-
-	a := ctx.Auth
-	hc := &http.Client{Timeout: 30 * time.Second}
-	fmtFlag := ctx.FormatFlags.Format
 
 	stageFlag := cmdctx.GetString(ctx.FlagValues, "stage")
 	stepFlag := cmdctx.GetString(ctx.FlagValues, "step")
@@ -70,12 +54,17 @@ func getPipelineLogHandler(ctx *cmdctx.Ctx) error {
 		return fmt.Errorf("--step requires --stage")
 	}
 
-	isPrefixMode := strings.HasSuffix(ctx.Id, "/") || stageFlag != ""
-	id := strings.TrimRight(ctx.Id, "/")
-	parts := strings.SplitN(id, "/", 4)
-	if len(parts) <= 2 {
-		isPrefixMode = true
+	if cmdctx.GetBool(ctx.FlagValues, "follow") {
+		hc := &http.Client{Timeout: 90 * time.Minute}
+		style := logstream.ParseMultiStyle(cmdctx.GetString(ctx.FlagValues, "format-multi"))
+		return logstream.FollowMulti(ctx, hc, execId, stageFlag, stepFlag, style, nil)
 	}
+
+	a := ctx.Auth
+	hc := &http.Client{Timeout: 30 * time.Second}
+	fmtFlag := ctx.FormatFlags.Format
+	prefixFlag := cmdctx.GetString(ctx.FlagValues, "logkey-prefix")
+	logkeyFlag := cmdctx.GetString(ctx.FlagValues, "logkey")
 
 	w, closeW, err := format.OpenWriter(ctx.FormatFlags.OutFile)
 	if err != nil {
@@ -83,87 +72,71 @@ func getPipelineLogHandler(ctx *cmdctx.Ctx) error {
 	}
 	defer closeW()
 
-	if isPrefixMode {
-		if len(parts) < 1 {
-			return fmt.Errorf("prefix mode requires at least <execId>")
+	if logkeyFlag != "" {
+		hasContent, fetchErr := logstream.FetchAndPrintLog(hc, a, logkeyFlag, fmtFlag, ctx.IsPty, w)
+		if fetchErr != nil {
+			return fetchErr
 		}
-		var execId, filterPrefix string
-		if len(parts) == 1 {
-			execId = parts[0]
-		} else if len(parts) == 2 {
-			execId = parts[1]
-		} else {
-			execId = strings.TrimPrefix(parts[2], "-")
-			if len(parts) == 4 {
-				filterPrefix = id
-			}
-		}
-		entries, _, err := logstream.FetchLogKeys(hc, a, execId)
-		if err != nil {
-			return err
-		}
-		noHeader := cmdctx.GetBool(ctx.FlagValues, "no-header")
-
-		type result struct {
-			key  string
-			body string
-			err  error
-		}
-		var results []result
-		var matchedKeys int
-		for _, e := range entries {
-			if filterPrefix != "" && !strings.HasPrefix(e.LogKey, filterPrefix) {
-				continue
-			}
-			matchedKeys++
-			if stageFlag != "" {
-				parts := strings.SplitN(e.LogKey, "/", 6)
-				if len(parts) < 4 || !strings.EqualFold(parts[3], stageFlag) {
-					continue
-				}
-				if stepFlag != "" && (len(parts) < 5 || !strings.EqualFold(parts[4], stepFlag)) {
-					continue
-				}
-			}
-			var buf strings.Builder
-			hasContent, fetchErr := logstream.FetchAndPrintLog(hc, a, e.LogKey, fmtFlag, ctx.IsPty, &buf)
-			if fetchErr != nil {
-				results = append(results, result{key: e.LogKey, err: fetchErr})
-				continue
-			}
-			if !hasContent {
-				continue
-			}
-			results = append(results, result{key: e.LogKey, body: buf.String()})
-		}
-
-		if filterPrefix != "" && matchedKeys == 0 {
-			return fmt.Errorf("no log keys matched prefix %q", filterPrefix)
-		}
-
-		showHeaders := !noHeader
-		for _, r := range results {
-			if r.err != nil {
-				if showHeaders {
-					fmt.Fprintf(w, "\n== %s ==\n", r.key)
-				}
-				fmt.Fprintf(w, "(error: %v)\n", r.err)
-				continue
-			}
-			if showHeaders {
-				fmt.Fprintf(w, "\n== %s ==\n", r.key)
-			}
-			fmt.Fprint(w, r.body)
+		if !hasContent {
+			fmt.Fprintf(os.Stderr, "no log content for key %q\n", logkeyFlag)
 		}
 		return nil
 	}
 
-	hasContent, err := logstream.FetchAndPrintLog(hc, a, ctx.Id, fmtFlag, ctx.IsPty, w)
+	entries, _, err := logstream.FetchLogKeys(hc, a, execId)
 	if err != nil {
 		return err
 	}
-	if !hasContent {
-		fmt.Fprintf(os.Stderr, "no log content for key %q\n", ctx.Id)
+
+	type result struct {
+		key  string
+		body string
+		err  error
+	}
+	var results []result
+	for _, e := range entries {
+		if prefixFlag != "" && !strings.HasPrefix(e.LogKey, prefixFlag) {
+			continue
+		}
+		if stageFlag != "" && !strings.EqualFold(e.ParentName, stageFlag) && !strings.EqualFold(e.Name, stageFlag) {
+			continue
+		}
+		if stepFlag != "" && !strings.EqualFold(e.Name, stepFlag) {
+			continue
+		}
+		var buf strings.Builder
+		hasContent, fetchErr := logstream.FetchAndPrintLog(hc, a, e.LogKey, fmtFlag, ctx.IsPty, &buf)
+		if fetchErr != nil {
+			results = append(results, result{key: e.LogKey, err: fetchErr})
+			continue
+		}
+		if !hasContent {
+			continue
+		}
+		results = append(results, result{key: e.LogKey, body: buf.String()})
+	}
+
+	if len(results) == 0 {
+		if prefixFlag != "" {
+			return fmt.Errorf("no log keys matched prefix %q", prefixFlag)
+		}
+		if stageFlag != "" {
+			return fmt.Errorf("no logs found for stage %q", stageFlag)
+		}
+		fmt.Fprintf(os.Stderr, "no log content for execution %q\n", execId)
+		return nil
+	}
+
+	multiLog := len(results) > 1
+	for _, r := range results {
+		if multiLog {
+			fmt.Fprintf(w, "\n== %s ==\n", r.key)
+		}
+		if r.err != nil {
+			fmt.Fprintf(w, "(error: %v)\n", r.err)
+			continue
+		}
+		fmt.Fprint(w, r.body)
 	}
 	return nil
 }
@@ -181,13 +154,9 @@ func pipelineLogStageCompletion(a *auth.ResolvedAuth, args []string, flags *pfla
 	seen := make(map[string]bool)
 	var stages []string
 	for _, e := range entries {
-		parts := strings.SplitN(e.LogKey, "/", 5)
-		if len(parts) >= 4 {
-			stage := parts[3]
-			if !seen[stage] {
-				seen[stage] = true
-				stages = append(stages, stage)
-			}
+		if e.Depth == 1 && !seen[e.Name] {
+			seen[e.Name] = true
+			stages = append(stages, e.Name)
 		}
 	}
 	return stages, nil
@@ -210,13 +179,9 @@ func pipelineLogStepCompletion(a *auth.ResolvedAuth, args []string, flags *pflag
 	seen := make(map[string]bool)
 	var steps []string
 	for _, e := range entries {
-		parts := strings.SplitN(e.LogKey, "/", 6)
-		if len(parts) >= 5 && strings.EqualFold(parts[3], stage) {
-			step := parts[4]
-			if !seen[step] {
-				seen[step] = true
-				steps = append(steps, step)
-			}
+		if strings.EqualFold(e.ParentName, stage) && !seen[e.Name] {
+			seen[e.Name] = true
+			steps = append(steps, e.Name)
 		}
 	}
 	return steps, nil

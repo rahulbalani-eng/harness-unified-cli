@@ -202,7 +202,7 @@ func executePlan(
 	fmt.Printf("Pipeline execution: %s\n", execURL)
 
 	fmt.Println("\n=== Pipeline Execution Logs ===")
-	return logstream.FollowMulti(cmdCtx, hc, exec.PipelineExecutionID, "", "", map[string]bool{
+	return logstream.FollowMulti(cmdCtx, hc, exec.PipelineExecutionID, "", "", logstream.MultiStyleMarkers, map[string]bool{
 		"IACMIntegrationStageStepPMS": true,
 		"IACMPrepareExecution":        true,
 	})

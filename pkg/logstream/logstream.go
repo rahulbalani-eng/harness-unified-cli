@@ -56,9 +56,11 @@ type Event struct {
 }
 
 type LogKeyEntry struct {
-	LogKey string
-	Name   string
-	Status string
+	LogKey     string
+	Name       string
+	Status     string
+	Depth      int
+	ParentName string
 }
 
 func RenderLogLinesToWriter(text, fmtFlag string, isPty bool, w io.Writer) error {
@@ -101,12 +103,7 @@ func RenderLogLinesToWriter(text, fmtFlag string, isPty bool, w io.Writer) error
 
 // FetchAndPrintLog fetches a log blob and writes it to out.
 // Returns (false, nil) when the blob exists but is empty.
-func FetchAndPrintLog(hc *http.Client, a *auth.ResolvedAuth, shortKey, fmtFlag string, isPty bool, out io.Writer) (bool, error) {
-	logKey := shortKey
-	if !strings.Contains(logKey, "/pipeline/") {
-		logKey = a.AccountID + "/pipeline/" + logKey
-	}
-
+func FetchAndPrintLog(hc *http.Client, a *auth.ResolvedAuth, logKey, fmtFlag string, isPty bool, out io.Writer) (bool, error) {
 	blobURL, err := url.Parse(a.APIUrl + "/gateway/log-service/blob")
 	if err != nil {
 		return false, fmt.Errorf("building URL: %w", err)
@@ -208,13 +205,14 @@ func ShortLogKey(key string) string {
 	return key
 }
 
-// FindNodeForFollow finds the graph node whose logBaseKey best matches the given short key.
-func FindNodeForFollow(g execgraph.ExecutionGraph, shortKey string) (execgraph.GraphNode, bool) {
+// FindNodeForFollow finds the graph node whose logBaseKey matches the given key.
+// Matches against both the full raw logBaseKey and its short form (after pipeline/ prefix).
+func FindNodeForFollow(g execgraph.ExecutionGraph, logKey string) (execgraph.GraphNode, bool) {
 	for _, node := range g.NodeMap {
 		if node.LogBaseKey == "" {
 			continue
 		}
-		if ShortLogKey(node.LogBaseKey) == shortKey {
+		if node.LogBaseKey == logKey || ShortLogKey(node.LogBaseKey) == logKey {
 			return node, true
 		}
 	}
@@ -263,27 +261,50 @@ func WriteEndEvent(w io.Writer, source string, node execgraph.GraphNode) {
 	}
 }
 
+type MultiStyle int
+
+const (
+	MultiStyleMarkers MultiStyle = iota // ==> source switching markers + events (default)
+	MultiStyleInline                    // [source] prefix on each log line, no markers/events
+)
+
+func ParseMultiStyle(s string) MultiStyle {
+	if s == "inline" {
+		return MultiStyleInline
+	}
+	return MultiStyleMarkers
+}
+
 // WriteEvents drains ch and writes events to w.
-// Emits switching markers ("==> source") before log content when the source changes.
-func WriteEvents(ch <-chan Event, w io.Writer) {
+func WriteEvents(ch <-chan Event, w io.Writer, style MultiStyle) {
 	lastSource := ""
 	for ev := range ch {
 		switch ev.Kind {
 		case EvStart:
-			ts := ev.StartTs
-			if ts == 0 {
-				ts = time.Now().UnixMilli()
+			if style == MultiStyleMarkers {
+				ts := ev.StartTs
+				if ts == 0 {
+					ts = time.Now().UnixMilli()
+				}
+				fmt.Fprintf(w, ">>> started %s %s\n", ev.Source, time.UnixMilli(ts).UTC().Format("15:04:05.000"))
 			}
-			fmt.Fprintf(w, ">>> started %s %s\n", ev.Source, time.UnixMilli(ts).UTC().Format("15:04:05.000"))
 		case EvEnd:
-			WriteEndEvent(w, ev.Source, ev.Node)
-		case EvLogLine, EvBlob:
-			if ev.Source != lastSource {
-				fmt.Fprintf(w, "==> %s\n", ev.Source)
-				lastSource = ev.Source
+			if style == MultiStyleMarkers {
+				WriteEndEvent(w, ev.Source, ev.Node)
 			}
-			for _, line := range ev.Lines {
-				fmt.Fprint(w, line)
+		case EvLogLine, EvBlob:
+			if style == MultiStyleInline {
+				for _, line := range ev.Lines {
+					fmt.Fprintf(w, "[%s] %s", ev.Source, line)
+				}
+			} else {
+				if ev.Source != lastSource {
+					fmt.Fprintf(w, "==> %s\n", ev.Source)
+					lastSource = ev.Source
+				}
+				for _, line := range ev.Lines {
+					fmt.Fprint(w, line)
+				}
 			}
 		}
 	}
@@ -403,140 +424,37 @@ func FetchLogKeys(hc *http.Client, a *auth.ResolvedAuth, execId string) ([]LogKe
 	seenNode := make(map[string]bool)
 	seenKey := make(map[string]bool)
 	var entries []LogKeyEntry
-	var walk func(id string)
-	walk = func(id string) {
+	var walk func(id string, depth int, parentName string)
+	walk = func(id string, depth int, parentName string) {
 		if seenNode[id] {
 			return
 		}
 		seenNode[id] = true
 		node := g.NodeMap[id]
+		name := execgraph.NodeName(node)
 		if node.LogBaseKey != "" {
 			lk := node.LogBaseKey
-			if idx := strings.Index(lk, "pipeline/"); idx >= 0 {
-				lk = lk[idx+len("pipeline/"):]
-			}
 			if !seenKey[lk] {
 				seenKey[lk] = true
-				entries = append(entries, LogKeyEntry{LogKey: lk, Name: execgraph.NodeName(node), Status: node.Status})
+				entries = append(entries, LogKeyEntry{LogKey: lk, Name: name, Status: node.Status, Depth: depth, ParentName: parentName})
 			}
 		}
 		for _, child := range g.NodeAdjacencyListMap[id].Children {
-			walk(child)
+			walk(child, depth+1, name)
 		}
 		for _, next := range g.NodeAdjacencyListMap[id].NextIDs {
-			walk(next)
+			walk(next, depth, parentName)
 		}
 	}
 	if g.RootNodeID != "" {
-		walk(g.RootNodeID)
+		walk(g.RootNodeID, 0, "")
 	}
 	return entries, exec.PipelineStatus, nil
 }
 
-// FollowLog implements --follow for a single log key.
-func FollowLog(ctx *cmdctx.Ctx, hc *http.Client, shortKey string) error {
-	a := ctx.Auth
-	fmtFlag := ctx.FormatFlags.Format
-	w, closeW, err := format.OpenWriter(ctx.FormatFlags.OutFile)
-	if err != nil {
-		return err
-	}
-	defer closeW()
-
-	parts := strings.SplitN(shortKey, "/", 4)
-	var execId string
-	if len(parts) >= 3 {
-		execId = strings.TrimPrefix(parts[2], "-")
-	} else if len(parts) == 2 {
-		execId = parts[1]
-	} else {
-		execId = parts[0]
-	}
-
-	exec, err := execgraph.FetchExecutionFull(hc, a, execId)
-	if err != nil {
-		return err
-	}
-
-	node, nodeFound := FindNodeForFollow(exec.Graph, shortKey)
-
-	source := shortKey
-	if len(parts) >= 4 {
-		source = parts[3]
-	} else if len(parts) == 3 {
-		source = strings.TrimPrefix(parts[2], "-")
-	}
-
-	fullLogKey := shortKey
-	if !strings.Contains(fullLogKey, "/pipeline/") {
-		fullLogKey = a.AccountID + "/pipeline/" + fullLogKey
-	}
-
-	ch := make(chan Event, 256)
-	var finalStatus string
-
-	sseCtx, cancelSSE := context.WithCancel(context.Background())
-	defer cancelSSE()
-
-	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-
-		if IsTerminalStatus(exec.PipelineStatus) || (nodeFound && IsTerminalStatus(node.Status)) {
-			finalStatus = exec.PipelineStatus
-			if nodeFound && node.StartTs > 0 {
-				ch <- Event{Kind: EvStart, Source: source, StartTs: node.StartTs}
-			}
-			FetchBlobToChannel(hc, a, shortKey, source, fmtFlag, ctx.IsPty, ch, node.EndTs) //nolint
-			if nodeFound {
-				ch <- Event{Kind: EvEnd, Source: source, Node: node}
-			}
-			return
-		}
-
-		startTs := time.Now().UnixMilli()
-		if nodeFound && node.StartTs > 0 {
-			startTs = node.StartTs
-		}
-		ch <- Event{Kind: EvStart, Source: source, StartTs: startTs}
-
-		sseHadContent, _ := StreamSSEToChannel(sseCtx, hc, a, fullLogKey, source, fmtFlag, ctx.IsPty, ch)
-
-		exec2, err2 := execgraph.FetchExecutionFull(hc, a, execId)
-		if err2 == nil {
-			finalStatus = exec2.PipelineStatus
-			if node2, ok := FindNodeForFollow(exec2.Graph, shortKey); ok {
-				if !sseHadContent {
-					hlog.Debug("SSE had no content, falling back to blob", "key", shortKey)
-					FetchBlobToChannel(hc, a, shortKey, source, fmtFlag, ctx.IsPty, ch, node2.EndTs) //nolint
-				}
-				ch <- Event{Kind: EvEnd, Source: source, Node: node2}
-				return
-			}
-		}
-		ch <- Event{Kind: EvEnd, Source: source, Node: execgraph.GraphNode{
-			Status: "Success",
-			EndTs:  time.Now().UnixMilli(),
-		}}
-	}()
-
-	go func() {
-		wg.Wait()
-		close(ch)
-	}()
-
-	WriteEvents(ch, w)
-
-	if format.ClassifyExecutionStatus(finalStatus) == format.StatusFailed {
-		return fmt.Errorf("execution %s", strings.ToLower(finalStatus))
-	}
-	return nil
-}
-
 // FollowMulti follows all log keys for an execution (or a stage/step filtered subset).
 // extraSkipTypes supplements BaseSkipStepTypes — pass nil to use the base set only.
-func FollowMulti(ctx *cmdctx.Ctx, hc *http.Client, execId, stageFilter, stepFilter string, extraSkipTypes map[string]bool) error {
+func FollowMulti(ctx *cmdctx.Ctx, hc *http.Client, execId, stageFilter, stepFilter string, style MultiStyle, extraSkipTypes map[string]bool) error {
 	a := ctx.Auth
 	fmtFlag := ctx.FormatFlags.Format
 
@@ -568,27 +486,20 @@ func FollowMulti(ctx *cmdctx.Ctx, hc *http.Client, execId, stageFilter, stepFilt
 	var finalStatus string
 	var hasSSE bool
 
-	nodeMatchesFilter := func(logKey string) bool {
-		if stageFilter == "" {
-			return true
-		}
-		parts := strings.SplitN(logKey, "/", 6)
-		if len(parts) < 4 || !strings.EqualFold(parts[3], stageFilter) {
+	nodeMatchesFilter := func(node execgraph.GraphNode, parentName string) bool {
+		name := execgraph.NodeName(node)
+		if stageFilter != "" && !strings.EqualFold(name, stageFilter) && !strings.EqualFold(parentName, stageFilter) {
 			return false
 		}
-		if stepFilter != "" && (len(parts) < 5 || !strings.EqualFold(parts[4], stepFilter)) {
+		if stepFilter != "" && !strings.EqualFold(name, stepFilter) {
 			return false
 		}
 		return true
 	}
 
 	sourceLabel := func(logKey string) string {
-		parts := strings.SplitN(logKey, "/", 4)
-		if len(parts) >= 4 {
-			return parts[3]
-		}
-		if len(parts) == 3 {
-			return strings.TrimPrefix(parts[2], "-")
+		if i := strings.LastIndex(logKey, "/"); i >= 0 {
+			return logKey[i+1:]
 		}
 		return logKey
 	}
@@ -610,21 +521,19 @@ func FollowMulti(ctx *cmdctx.Ctx, hc *http.Client, execId, stageFilter, stepFilt
 		seenNode := make(map[string]bool)
 		seenKey := make(map[string]bool)
 		var newNodes []nodeEntry
-		var walk func(id string)
-		walk = func(id string) {
+		var walk func(id string, parentName string)
+		walk = func(id string, parentName string) {
 			if seenNode[id] {
 				return
 			}
 			seenNode[id] = true
 			node := exec.Graph.NodeMap[id]
+			name := execgraph.NodeName(node)
 			if node.LogBaseKey != "" && !skipTypes[node.StepType] {
 				lk := node.LogBaseKey
-				if _, after, ok := strings.Cut(lk, "pipeline/"); ok {
-					lk = after
-				}
 				if !seenKey[lk] {
 					seenKey[lk] = true
-					if !nodeStarted[lk] && nodeMatchesFilter(lk) {
+					if !nodeStarted[lk] && nodeMatchesFilter(node, parentName) {
 						bucket := format.ClassifyExecutionStatus(node.Status)
 						if bucket == format.StatusRunning || bucket == format.StatusSuccess || bucket == format.StatusSkipped || bucket == format.StatusFailed {
 							newNodes = append(newNodes, nodeEntry{logKey: lk, node: node, rank: node.Rank})
@@ -633,14 +542,14 @@ func FollowMulti(ctx *cmdctx.Ctx, hc *http.Client, execId, stageFilter, stepFilt
 				}
 			}
 			for _, child := range exec.Graph.NodeAdjacencyListMap[id].Children {
-				walk(child)
+				walk(child, name)
 			}
 			for _, next := range exec.Graph.NodeAdjacencyListMap[id].NextIDs {
-				walk(next)
+				walk(next, parentName)
 			}
 		}
 		if exec.Graph.RootNodeID != "" {
-			walk(exec.Graph.RootNodeID)
+			walk(exec.Graph.RootNodeID, "")
 		}
 
 		hlog.Debug("pollOnce", "pipelineStatus", exec.PipelineStatus, "newNodes", len(newNodes))
@@ -716,10 +625,6 @@ func FollowMulti(ctx *cmdctx.Ctx, hc *http.Client, execId, stageFilter, stepFilt
 		for i := range newNodes {
 			e := newNodes[i]
 			source := sourceLabel(e.logKey)
-			fullKey := e.logKey
-			if !strings.Contains(fullKey, "/pipeline/") {
-				fullKey = a.AccountID + "/pipeline/" + fullKey
-			}
 			if format.ClassifyExecutionStatus(e.node.Status) != format.StatusSkipped {
 				startTs := e.node.StartTs
 				if startTs == 0 {
@@ -739,11 +644,11 @@ func FollowMulti(ctx *cmdctx.Ctx, hc *http.Client, execId, stageFilter, stepFilt
 				ch <- r.end
 			} else {
 				hasSSE = true
-				lk, fk, src, nd := e.logKey, fullKey, source, e.node
+				lk, src, nd := e.logKey, source, e.node
 				wg.Add(1)
 				go func() {
 					defer wg.Done()
-					sseHadContent, _ := StreamSSEToChannel(sseCtx, hc, a, fk, src, fmtFlag, ctx.IsPty, ch)
+					sseHadContent, _ := StreamSSEToChannel(sseCtx, hc, a, lk, src, fmtFlag, ctx.IsPty, ch)
 					exec2, err2 := execgraph.FetchExecutionFull(hc, a, execId)
 					if err2 == nil {
 						if node2, ok := FindNodeForFollow(exec2.Graph, lk); ok {
@@ -787,7 +692,7 @@ func FollowMulti(ctx *cmdctx.Ctx, hc *http.Client, execId, stageFilter, stepFilt
 		close(ch)
 	}()
 
-	WriteEvents(ch, w)
+	WriteEvents(ch, w, style)
 
 	if format.ClassifyExecutionStatus(finalStatus) == format.StatusFailed {
 		return fmt.Errorf("execution %s", strings.ToLower(finalStatus))

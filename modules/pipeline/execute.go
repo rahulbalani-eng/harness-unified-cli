@@ -283,7 +283,7 @@ func executeFollowFn(ctx *cmdctx.Ctx, result any) error {
 	}
 	fmt.Println("\nFollowing log output...")
 	hc := &http.Client{Timeout: 90 * time.Minute}
-	return logstream.FollowMulti(ctx, hc, execId, "", "", nil)
+	return logstream.FollowMulti(ctx, hc, execId, "", "", logstream.MultiStyleMarkers, nil)
 }
 
 func parseKeyValuePairs(pairs []string) (map[string]string, error) {

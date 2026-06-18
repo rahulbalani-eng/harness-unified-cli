@@ -4,6 +4,7 @@
 package format
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"unicode"
@@ -114,7 +115,15 @@ func resolveToken(token string, byID map[string]spec.FieldDef) (spec.TableColumn
 }
 
 // splitTokens splits a comma-separated token string, trimming whitespace.
+// If the string is a JSON array, the array elements are used as tokens.
 func splitTokens(s string) []string {
+	s = strings.TrimSpace(s)
+	if strings.HasPrefix(s, "[") {
+		var arr []string
+		if err := json.Unmarshal([]byte(s), &arr); err == nil {
+			return arr
+		}
+	}
 	parts := strings.Split(s, ",")
 	out := make([]string, 0, len(parts))
 	for _, p := range parts {

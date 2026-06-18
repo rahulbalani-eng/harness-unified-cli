@@ -270,7 +270,7 @@ nouns:
         label: Started
         expr: epochMs(it["started"])
       - id: child_execution_id
-        label: Child Execution ID
+        label: Child ExecId
         expr: it["child_execution_id"]
 
   - noun: runtime_input_template
@@ -603,7 +603,7 @@ commands:
       get_id_expr: "-"
       paging:
         paging_strategy: flat_list
-      columns: [name, type, status, duration, delegate, error]
+      columns: [name, type, child_execution_id, status, duration, delegate, error]
 
   - command: list execution_log
     verb: list

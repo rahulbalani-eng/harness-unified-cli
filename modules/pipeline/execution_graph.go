@@ -87,10 +87,15 @@ func printTreeNode(w io.Writer, id string, depth int, visited map[string]bool, n
 		indent := strings.Repeat("  ", depth)
 		dur := fmtNodeDuration(node.StartTs, node.EndTs)
 		icon := statusIcon(node.Status)
+		childExecID := node.StepDetails.ChildPipelineExecutionDetails.PlanExecutionID
+		suffix := ""
+		if childExecID != "" {
+			suffix = fmt.Sprintf(" (⇒ %s)", childExecID)
+		}
 		if dur != "" {
-			fmt.Fprintf(w, "%s%s %s (%s)\n", indent, icon, execgraph.NodeName(node), dur)
+			fmt.Fprintf(w, "%s%s %s (%s)%s\n", indent, icon, execgraph.NodeName(node), dur, suffix)
 		} else {
-			fmt.Fprintf(w, "%s%s %s\n", indent, icon, execgraph.NodeName(node))
+			fmt.Fprintf(w, "%s%s %s%s\n", indent, icon, execgraph.NodeName(node), suffix)
 		}
 		nextDepth = depth + 1
 	}

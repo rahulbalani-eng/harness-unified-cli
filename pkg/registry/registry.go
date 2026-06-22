@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -404,30 +405,37 @@ func (r *Registry) unknownNounError(verb, noun string) error {
 	} else {
 		msg = fmt.Sprintf("%q is not a valid noun for %q", noun, verb)
 	}
-	seen := map[string]bool{}
-	var suggestions []string
-	addSuggestion := func(canonical string) {
-		if !seen[canonical] {
-			seen[canonical] = true
-			suggestions = append(suggestions, canonical)
-		}
-	}
+	// Build candidates: every FullNoun and its aliases, scoped to this verb only.
+	type candidate struct{ display, canonical string }
+	var candidates []candidate
 	for _, cs := range r.specs[verb] {
-		if strutil.Levenshtein(noun, cs.FullNoun()) <= 3 {
-			addSuggestion(cs.FullNoun())
-		}
-	}
-	for alias, canonical := range r.nounAliases {
-		if strutil.Levenshtein(noun, alias) > 3 {
-			continue
-		}
-		for _, cs := range r.specs[verb] {
-			if cs.Noun == canonical {
-				addSuggestion(canonical)
-				break
+		candidates = append(candidates, candidate{cs.FullNoun(), cs.FullNoun()})
+		if nd := r.GetNoun(cs.Noun); nd != nil {
+			for _, alias := range nd.NounAliases {
+				candidates = append(candidates, candidate{alias, cs.FullNoun()})
 			}
 		}
 	}
+	bestDist := map[string]int{}
+	for _, c := range candidates {
+		d := strutil.Levenshtein(noun, c.display)
+		if d <= 3 {
+			if cur, ok := bestDist[c.canonical]; !ok || d < cur {
+				bestDist[c.canonical] = d
+			}
+		}
+	}
+	suggestions := make([]string, 0, len(bestDist))
+	for canonical := range bestDist {
+		suggestions = append(suggestions, canonical)
+	}
+	sort.Slice(suggestions, func(i, j int) bool {
+		di, dj := bestDist[suggestions[i]], bestDist[suggestions[j]]
+		if di != dj {
+			return di < dj
+		}
+		return suggestions[i] < suggestions[j]
+	})
 	if len(suggestions) > 0 {
 		msg += "\n\nDid you mean: " + strings.Join(suggestions, ", ") + "?"
 	}

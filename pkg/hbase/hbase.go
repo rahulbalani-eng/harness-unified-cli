@@ -32,6 +32,12 @@ const (
 	EnvDebugCompletion     = "HARNESS_DEBUG_COMPLETION"
 	CompletionDebugLogFile = "/tmp/harness-completion-debug.log"
 
+	// EnvPipelineID is set by the Harness platform when running inside a pipeline.
+	EnvPipelineID = "HARNESS_PIPELINEID"
+
+	// EnvNoUpdateCheck disables the background update check when set to "1".
+	EnvNoUpdateCheck = "HARNESS_NO_UPDATE_CHECK"
+
 	// Env var names for env-var auth mode.
 	EnvAPIKey      = "HARNESS_API_KEY"
 	EnvAccount     = "HARNESS_ACCOUNT"
@@ -53,6 +59,11 @@ func GetCredentialsFilePath() string {
 // IsDev reports whether this is a development build (Version ends with "-dev").
 func IsDev() bool {
 	return strings.HasSuffix(Version, "-dev")
+}
+
+// IsPipelineExecution reports whether the CLI is running as a step inside a Harness pipeline.
+func IsPipelineExecution() bool {
+	return os.Getenv(EnvPipelineID) != ""
 }
 
 func GetHarnessHomeDir() string {

@@ -254,7 +254,7 @@ func RunEndpoint(ctx *cmdctx.Ctx, ep *spec.EndpointSpec) (any, error) {
 			if err := yaml.Unmarshal([]byte(s), &parsed); err != nil {
 				return nil, fmt.Errorf("parsing %q as YAML: %w", ep.FieldExtract, err)
 			}
-			return result, format.FormatSingleOutput(ctx.FormatFlags, ctx.IsPty, parsed, "it", nil, exprEnv)
+			return result, format.FormatSingleOutput(ctx.FormatFlags, ctx.IsPty, parsed, "", "", nil, exprEnv)
 		}
 		w, closeW, err := format.OpenWriter(ctx.FormatFlags.OutFile)
 		if err != nil {
@@ -294,7 +294,7 @@ func RunEndpoint(ctx *cmdctx.Ctx, ep *spec.EndpointSpec) (any, error) {
 			textFmt = buildDeclTextFmt(fields, ep, exprEnv)
 		}
 	}
-	return result, format.FormatSingleOutput(ctx.FormatFlags, ctx.IsPty, result, ep.ItemExpr, textFmt, exprEnv)
+	return result, format.FormatSingleOutput(ctx.FormatFlags, ctx.IsPty, result, ep.ItemExpr, ep.YamlPickExpr, textFmt, exprEnv)
 }
 
 // RunListEndpoint calls CallEndpoint then renders the result as a list.

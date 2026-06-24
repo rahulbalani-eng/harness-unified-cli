@@ -32,9 +32,11 @@ Scope flags (all commands):
   --level project|org|account      set scope for multi-level nouns (e.g. secrets, users)
   --timeout <seconds>              abort after this many seconds; accepts decimals (e.g. 1.5); 0 = no timeout; exits 124
 
+Common output flags:
+  --json                           shorthand for --format json
+
 Output flags (list):
   --format table|json|jsonl|csv|tsv|markdown    output format (default: table)
-  --json                                        shorthand for --format json
   --columns <ids or exprs>                      customize columns (e.g. "name,org" or "+tags")
   --list-columns                                print available column IDs for this command
 
@@ -44,9 +46,14 @@ Paging flags (list):
   --offset <n>                                  start at this item offset (default 0)
   --count                                       print total count instead of results
 
-Output flags (get, create, update):
+Output flags (get):
+  --format text|json|yaml          output format (default: text)
+  --format yaml                    emit the object only (no envelope), ready to edit and pass back with update -f
+  --fields <ids>                   extract field values, tab-separated (e.g. "name,git_url"); for shell $() capture
+  --list-fields                    print available field IDs for this command
+
+Output flags (create, update):
   --format text|json               output format (default: text)
-  --json                           shorthand for --format json
   --fields <ids>                   extract field values, tab-separated (e.g. "name,git_url"); for shell $() capture
   --list-fields                    print available field IDs for this command
 

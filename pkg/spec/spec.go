@@ -304,6 +304,10 @@ type EndpointSpec struct {
 	// response. Required for all VerbGet commands. Use "it" for bare item responses.
 	// "it" is bound to the full response; ctx, auth, flags, and helpers are also available.
 	ItemExpr string `yaml:"item_expr,omitempty"`
+	// YamlPickExpr, when non-empty, enables --format yaml on get commands and defines which
+	// subtree of the raw API response to emit. Evaluated from root ("it" = full response).
+	// Should produce an object that round-trips cleanly with the corresponding update -f.
+	YamlPickExpr string `yaml:"yaml_pick_expr,omitempty"`
 	// GetIdExpr, when non-empty, is an expr-lang expression evaluated against each list
 	// item to produce the composite id suitable for passing to the corresponding get command.
 	// "it" is bound to the item; parentId/parentIdParts are also available.

@@ -190,9 +190,10 @@ func FormatFieldsOutput(flags cmdctx.FormatFlags, data any, itemExpr string, fie
 
 // FormatSingleOutput renders a single-item response (get, execute, …).
 // itemExpr is an expr-lang expression unwrapped unless --raw is set. Use "it" for bare responses.
+// yamlPickExpr, when non-empty, enables --format yaml and defines which subtree to emit; evaluated
+// from the raw response root. textFmt, when non-nil, is used when format is "text".
 // "it" is bound to the full response; ctx, auth, flags, and helpers are also available via exprEnv.
-// textFmt, when non-nil, is used when format is "text" (or unset on a PTY with a textFmt registered).
-func FormatSingleOutput(flags cmdctx.FormatFlags, isPty bool, data any, itemExpr string, textFmt TextFormatterFn, exprEnv map[string]any) error {
+func FormatSingleOutput(flags cmdctx.FormatFlags, isPty bool, data any, itemExpr string, yamlPickExpr string, textFmt TextFormatterFn, exprEnv map[string]any) error {
 	if flags.Format == "" {
 		if textFmt != nil {
 			flags.Format = "text"
@@ -200,8 +201,11 @@ func FormatSingleOutput(flags cmdctx.FormatFlags, isPty bool, data any, itemExpr
 			flags.Format = "json"
 		}
 	}
+	if flags.Format == "yaml" && yamlPickExpr == "" {
+		return fmt.Errorf("--format yaml is not supported for this command")
+	}
 	if flags.Format != "json" && flags.Format != "text" && flags.Format != "yaml" {
-		return fmt.Errorf("format %q is not supported here; use json, yaml, or text", flags.Format)
+		return fmt.Errorf("format %q is not supported here; use json or text", flags.Format)
 	}
 
 	w, closeW, err := OpenWriter(flags.OutFile)
@@ -209,6 +213,14 @@ func FormatSingleOutput(flags cmdctx.FormatFlags, isPty bool, data any, itemExpr
 		return err
 	}
 	defer closeW()
+
+	if flags.Format == "yaml" && !flags.Raw {
+		picked := evalColumnExpr(withIt(exprEnv, data), yamlPickExpr)
+		if picked == nil {
+			return nil
+		}
+		return writeYAML(w, picked)
+	}
 
 	payload := data
 	if !flags.Raw && itemExpr != "" {
@@ -226,6 +238,7 @@ func FormatSingleOutput(flags cmdctx.FormatFlags, isPty bool, data any, itemExpr
 		return textFmt(w, extractutil.MakeDataAccessor(exprEnv, payload))
 	}
 	if flags.Format == "yaml" {
+		// --raw with yaml: no pick expr applied, fall through to marshal full payload
 		return writeYAML(w, payload)
 	}
 	return writeJSON(w, payload)
@@ -243,12 +256,12 @@ func OpenWriter(outFile string) (io.Writer, func(), error) {
 }
 
 func writeYAML(w io.Writer, data any) error {
-	out, err := yaml.Marshal(data)
-	if err != nil {
+	enc := yaml.NewEncoder(w)
+	enc.SetIndent(2)
+	if err := enc.Encode(data); err != nil {
 		return fmt.Errorf("formatting output: %w", err)
 	}
-	_, err = w.Write(out)
-	return err
+	return enc.Close()
 }
 
 func writeJSON(w io.Writer, data any) error {

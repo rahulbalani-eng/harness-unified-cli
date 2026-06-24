@@ -398,6 +398,7 @@ commands:
     endpoint:
       path: /code/api/v1/repos/{{ctx.id}}
       item_expr: it
+      yaml_pick_expr: it
 
   - command: create repository
     verb: create
@@ -514,6 +515,7 @@ commands:
     endpoint:
       path: /code/api/v1/repos/{{ctx.idParts[0]}}/pullreq/{{ctx.idParts[1]}}
       item_expr: it
+      yaml_pick_expr: it
       text_footer: "\n{{url(it)}}\n"
 
   - command: create pr

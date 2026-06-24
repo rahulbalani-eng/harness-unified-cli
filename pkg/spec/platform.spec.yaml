@@ -481,6 +481,7 @@ commands:
     endpoint:
       path: /ng/api/organizations/{{ctx.id}}
       item_expr: it.data.organization
+      yaml_pick_expr: it.data.organization
 
   - command: update organization
     verb: update
@@ -589,6 +590,7 @@ commands:
     endpoint:
       path: /ng/api/projects/{{ctx.id}}
       item_expr: it.data
+      yaml_pick_expr: it.data.project
       query_params:
         accountIdentifier: auth.account
         orgIdentifier: auth.org
@@ -1013,6 +1015,7 @@ commands:
     endpoint:
       path: /ng/api/connectors/{{ctx.id}}
       item_expr: it.data
+      yaml_pick_expr: it.data.connector
 
   - command: execute connector:test
     verb: execute
@@ -1118,6 +1121,7 @@ commands:
     endpoint:
       path: /ng/api/v2/secrets/{{ctx.id}}
       item_expr: it.data
+      yaml_pick_expr: it.data.secret
 
   - command: create secret
     verb: create

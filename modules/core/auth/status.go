@@ -24,6 +24,7 @@ import (
 
 type checkResult struct {
 	OK     bool   `json:"ok"`
+	Warn   bool   `json:"warn,omitempty"`  // soft warning: not OK but not a blocking error
 	Name   string `json:"name,omitempty"`
 	Error  string `json:"error,omitempty"`  // short message shown in the row
 	Detail string `json:"detail,omitempty"` // actionable message shown at the bottom
@@ -47,6 +48,8 @@ type statusResult struct {
 	OrgID       string       `json:"OrgID,omitempty"`
 	ProjectID   string       `json:"ProjectID,omitempty"`
 	ProjectURL  string       `json:"ProjectURL,omitempty"`
+	IsSAT       bool         `json:"IsSAT,omitempty"`
+	SATIdentity string       `json:"SATIdentity,omitempty"` // "username (email)" from token/validate
 	Status      statusChecks `json:"Status"`
 	CurrentUser any          `json:"CurrentUser,omitempty"`
 }
@@ -106,6 +109,7 @@ func runStatusChecks(profileFlag string) statusResult {
 	r.AccountID = resolved.AccountID
 	r.OrgID = resolved.OrgID
 	r.ProjectID = resolved.ProjectID
+	r.IsSAT = strings.HasPrefix(resolved.PATToken, "sat.")
 	r.Status.Profile = checkResult{OK: true}
 
 	if err := checkAPIUrl(resolved.APIUrl); err != nil {
@@ -129,25 +133,57 @@ func runStatusChecks(profileFlag string) statusResult {
 	}
 
 	c := &http.Client{Timeout: 10 * time.Second}
-	currentUser, err := fetchCurrentUser(c, resolved)
-	if err != nil {
-		r.Status.User = checkResult{OK: false, Error: err.Error()}
-		r.Status.Account = skip
-		r.Status.Org = &skip
-		r.Status.Project = &skip
-		return r
+	isSAT := strings.HasPrefix(resolved.PATToken, "sat.")
+	if isSAT {
+		identity, err := validateSATToken(c, resolved)
+		if err != nil {
+			r.Status.User = checkResult{OK: false, Error: err.Error()}
+			r.Status.Account = skip
+			r.Status.Org = &skip
+			r.Status.Project = &skip
+			return r
+		}
+		r.SATIdentity = identity
+		r.Status.User = checkResult{OK: true}
+	} else {
+		currentUser, err := fetchCurrentUser(c, resolved)
+		if err != nil {
+			r.Status.User = checkResult{OK: false, Error: err.Error()}
+			r.Status.Account = skip
+			r.Status.Org = &skip
+			r.Status.Project = &skip
+			return r
+		}
+		r.CurrentUser = currentUser
+		r.Status.User = checkResult{OK: true}
 	}
-	r.CurrentUser = currentUser
-	r.Status.User = checkResult{OK: true}
+
+	// softErr wraps a 403 as a warning for SAT tokens — the SA may lack enumeration
+	// permissions but still have resource-level access.
+	softErr := func(err error) checkResult {
+		if isSAT && err != nil && strings.Contains(err.Error(), "403") {
+			return checkResult{Warn: true, Error: "access denied (403) — SA may lack enumeration permissions"}
+		}
+		if err != nil {
+			return checkResult{OK: false, Error: err.Error()}
+		}
+		return checkResult{}
+	}
 
 	accountName, err := checkAccount(c, resolved)
 	if err != nil {
-		r.Status.Account = checkResult{OK: false, Error: err.Error()}
-		r.Status.Org = &skip
-		r.Status.Project = &skip
-		return r
+		cr := softErr(err)
+		if cr.Warn {
+			r.Status.Account = cr
+		} else {
+			r.Status.Account = cr
+			r.Status.Org = &skip
+			r.Status.Project = &skip
+			return r
+		}
+	} else {
+		r.Status.Account = checkResult{OK: true, Name: accountName}
 	}
-	r.Status.Account = checkResult{OK: true, Name: accountName}
 
 	if resolved.OrgID == "" {
 		orgResult := notSetResult(resolved.Source, hbase.EnvOrg, "org")
@@ -158,6 +194,14 @@ func runStatusChecks(profileFlag string) statusResult {
 	}
 	orgName, err := checkOrg(c, resolved)
 	if err != nil {
+		cr := softErr(err)
+		if cr.Warn {
+			orgWarn := cr
+			r.Status.Org = &orgWarn
+			projWarn := checkResult{Warn: true, Error: "access denied (403) — SA may lack enumeration permissions"}
+			r.Status.Project = &projWarn
+			return r
+		}
 		r.Status.Org = &checkResult{OK: false, Error: err.Error()}
 		r.Status.Project = &skip
 		return r
@@ -171,6 +215,12 @@ func runStatusChecks(profileFlag string) statusResult {
 	}
 	projectName, err := checkProject(c, resolved)
 	if err != nil {
+		cr := softErr(err)
+		if cr.Warn {
+			projWarn := cr
+			r.Status.Project = &projWarn
+			return r
+		}
 		r.Status.Project = &checkResult{OK: false, Error: err.Error()}
 		return r
 	}
@@ -196,9 +246,14 @@ func notSetResult(source, envVar, noun string) checkResult {
 	}
 }
 
-func statusValue(ok bool, value, errMsg string) string {
-	icon := console.GreenCheck()
-	if !ok {
+func statusValue(ok, warn bool, value, errMsg string) string {
+	var icon string
+	switch {
+	case ok:
+		icon = console.GreenCheck()
+	case warn:
+		icon = console.YellowWarning()
+	default:
 		icon = console.RedX()
 	}
 	if value == "" {
@@ -216,50 +271,62 @@ func printStatus(r statusResult) {
 		rows = append(rows, format.LabeledValue{Label: label, Value: value})
 	}
 
-	if r.Source == auth.SourceEnv {
-		add("Mode", statusValue(r.Status.Profile.OK, "env vars", r.Status.Profile.Error))
-	} else {
-		add("Profile", statusValue(r.Status.Profile.OK, r.Profile, r.Status.Profile.Error))
+	sv := func(c checkResult, value string) string {
+		return statusValue(c.OK, c.Warn, value, c.Error)
 	}
-	add("APIUrl", statusValue(r.Status.API.OK, r.APIUrl, r.Status.API.Error))
+
+	if r.Source == auth.SourceEnv {
+		add("Mode", sv(r.Status.Profile, "env vars"))
+	} else {
+		add("Profile", sv(r.Status.Profile, r.Profile))
+	}
+	add("APIUrl", sv(r.Status.API, r.APIUrl))
 	if r.RegistryURL != "" {
 		add("RegistryUrl", fmt.Sprintf("%s %s", console.GreenCheck(), r.RegistryURL))
 	}
 
+	userLabel := "User"
 	userVal := ""
-	if email, uuid := currentUserFields(r.CurrentUser); email != "" {
-		userVal = fmt.Sprintf("%s (%s)", email, uuid)
+	if r.IsSAT {
+		userLabel = "Token"
+		if r.Status.User.OK {
+			userVal = r.SATIdentity
+		}
+	} else {
+		if email, uuid := currentUserFields(r.CurrentUser); email != "" {
+			userVal = fmt.Sprintf("%s (%s)", email, uuid)
+		}
 	}
-	add("User", statusValue(r.Status.User.OK, userVal, r.Status.User.Error))
-	add("Account", statusValue(r.Status.Account.OK, func() string {
+	add(userLabel, sv(r.Status.User, userVal))
+	add("Account", sv(r.Status.Account, func() string {
 		if r.Status.Account.OK {
 			return fmt.Sprintf("%s (%s)", r.Status.Account.Name, r.AccountID)
 		}
 		return r.AccountID
-	}(), r.Status.Account.Error))
+	}()))
 	if r.OrgID != "" || r.Status.Org != nil {
 		org := r.Status.Org
 		if org == nil {
 			org = &checkResult{OK: false, Error: "skipped"}
 		}
-		add("Org", statusValue(org.OK, func() string {
+		add("Org", sv(*org, func() string {
 			if org.OK {
 				return fmt.Sprintf("%s (%s)", org.Name, r.OrgID)
 			}
 			return r.OrgID
-		}(), org.Error))
+		}()))
 	}
 	if r.ProjectID != "" || r.Status.Project != nil {
 		proj := r.Status.Project
 		if proj == nil {
 			proj = &checkResult{OK: false, Error: "skipped"}
 		}
-		add("Project", statusValue(proj.OK, func() string {
+		add("Project", sv(*proj, func() string {
 			if proj.OK {
 				return fmt.Sprintf("%s (%s)", proj.Name, r.ProjectID)
 			}
 			return r.ProjectID
-		}(), proj.Error))
+		}()))
 		if r.ProjectURL != "" {
 			add("ProjectURL", r.ProjectURL)
 		}
@@ -269,7 +336,7 @@ func printStatus(r statusResult) {
 }
 
 func checkErrors(r statusResult) error {
-	failed := func(c checkResult) bool { return !c.OK && c.Error != "skipped" }
+	failed := func(c checkResult) bool { return !c.OK && !c.Warn && c.Error != "skipped" }
 	msg := func(c checkResult) string {
 		if c.Detail != "" {
 			return c.Detail
@@ -324,6 +391,48 @@ func checkAPIUrl(apiURL string) error {
 		return fmt.Errorf("cannot reach %q — %s", u.Hostname(), err)
 	}
 	return nil
+}
+
+// validateSATToken calls POST /ng/api/token/validate and returns a display identity
+// string of the form "username (email)" parsed from the response.
+func validateSATToken(c *http.Client, a *auth.ResolvedAuth) (identity string, err error) {
+	u := fmt.Sprintf("%s/ng/api/token/validate?accountIdentifier=%s", a.APIUrl, a.AccountID)
+	req, err := http.NewRequest("POST", u, strings.NewReader(a.PATToken))
+	if err != nil {
+		return "", fmt.Errorf("building request: %w", err)
+	}
+	req.Header.Set("Content-Type", "text/plain")
+	req.Header.Set("x-api-key", a.PATToken)
+	resp, err := c.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	switch resp.StatusCode {
+	case 200:
+		var result struct {
+			Data struct {
+				Username string `json:"username"`
+				Email    string `json:"email"`
+			} `json:"data"`
+		}
+		if jerr := json.Unmarshal(body, &result); jerr == nil {
+			u, e := result.Data.Username, result.Data.Email
+			if u != "" && e != "" {
+				identity = fmt.Sprintf("%s (%s)", u, e)
+			} else if u != "" {
+				identity = u
+			}
+		}
+		return identity, nil
+	case 401:
+		return "", fmt.Errorf("token rejected (401)")
+	case 403:
+		return "", fmt.Errorf("access denied (403)")
+	default:
+		return "", fmt.Errorf("unexpected status %d", resp.StatusCode)
+	}
 }
 
 func fetchCurrentUser(c *http.Client, a *auth.ResolvedAuth) (any, error) {

@@ -19,6 +19,7 @@ import (
 	hclient "github.com/harness/harness-cli/pkg/client"
 	"github.com/harness/harness-cli/pkg/cmdctx"
 	"github.com/harness/harness-cli/pkg/hlog"
+	"github.com/harness/harness-cli/pkg/tui"
 )
 
 // WizardResult is returned by RunLoginWizard on success.
@@ -67,12 +68,12 @@ type wizardStyles struct {
 
 func newWizardStyles() wizardStyles {
 	return wizardStyles{
-		title:    lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("99")),
-		subtle:   lipgloss.NewStyle().Foreground(lipgloss.Color("240")),
-		errStyle: lipgloss.NewStyle().Foreground(lipgloss.Color("196")),
-		selected: lipgloss.NewStyle().Foreground(lipgloss.Color("86")).Bold(true),
-		prompt:   lipgloss.NewStyle().Foreground(lipgloss.Color("99")),
-		box:      lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("238")).Padding(0, 1),
+		title:    lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(tui.CLIAccent)),
+		subtle:   lipgloss.NewStyle().Foreground(lipgloss.Color(tui.CLITextMuted)),
+		errStyle: lipgloss.NewStyle().Foreground(lipgloss.Color(tui.CLIError)),
+		selected: lipgloss.NewStyle().Foreground(lipgloss.Color(tui.CLIAccent)).Bold(true),
+		prompt:   lipgloss.NewStyle().Foreground(lipgloss.Color(tui.CLIAccent)),
+		box:      lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(tui.CLIBorder)).Padding(0, 1),
 	}
 }
 
@@ -169,7 +170,7 @@ func newWizardModel(existing *WizardExisting) wizardModel {
 	url.SetWidth(50)
 
 	tok := textinput.New()
-	tok.Placeholder = "pat.xxxxxxxx.xxxxxxxx.xxxxxxxx"
+	tok.Placeholder = "pat.xxxxxxxx.xxxxxxxx.xxxxxxxx or sat.xxxxxxxx.xxxxxxxx.xxxxxxxx"
 	tok.EchoMode = textinput.EchoPassword
 	tok.EchoCharacter = '•'
 	tok.SetWidth(60)
@@ -185,7 +186,7 @@ func newWizardModel(existing *WizardExisting) wizardModel {
 		delegate.ShowDescription = false
 		delegate.SetHeight(1)
 		delegate.SetSpacing(0)
-		delegate.Styles.SelectedTitle = delegate.Styles.SelectedTitle.Foreground(lipgloss.Color("86")).BorderLeftForeground(lipgloss.Color("86"))
+		delegate.Styles.SelectedTitle = delegate.Styles.SelectedTitle.Foreground(lipgloss.Color(tui.CLIAccent)).BorderLeftForeground(lipgloss.Color(tui.CLIAccent))
 		l := list.New(nil, delegate, 60, 20)
 		l.Title = title
 		l.Styles.Title = st.title
@@ -564,7 +565,7 @@ func (m wizardModel) View() tea.View {
 
 	case stepToken:
 		b.WriteString(st.selected.Render("✓ ") + st.subtle.Render("API URL: "+m.apiURL) + "\n\n")
-		b.WriteString(st.prompt.Render("Harness PAT") + "\n")
+		b.WriteString(st.prompt.Render("Harness PAT/SAT") + "\n")
 		if m.tokenHasExisting && !m.tokenInCustom {
 			tokenLabels := []string{
 				"Use existing  (" + maskedToken(m.existingToken) + ")",
@@ -748,7 +749,7 @@ func deepGet(m map[string]any, path string) string {
 func validateAndFetch(apiURL, token string) (accountID, regURL string, err error) {
 	accountID = accountIDFromToken(token)
 	if accountID == "" {
-		return "", "", fmt.Errorf("token does not look like a Harness PAT (expected pat.<accountID>.<...>)")
+		return "", "", fmt.Errorf("token does not look like a Harness PAT/SAT (expected pat.<accountID>.<...> or sat.<accountID>.<...>)")
 	}
 	c := hclient.NewWithAuth(context.Background(), &pkgauth.ResolvedAuth{
 		APIUrl:    apiURL,
@@ -756,8 +757,14 @@ func validateAndFetch(apiURL, token string) (accountID, regURL string, err error
 		PATToken:  token,
 		AccountID: accountID,
 	})
-	if _, _, err := c.Get(fmt.Sprintf("/ng/api/accounts/%s", accountID), map[string]string{"accountIdentifier": accountID}); err != nil {
-		return "", "", err
+	if strings.HasPrefix(token, "sat.") {
+		if _, _, err := c.PostRaw("/ng/api/token/validate", map[string]string{"accountIdentifier": accountID}, token, "text/plain"); err != nil {
+			return "", "", err
+		}
+	} else {
+		if _, _, err := c.Get(fmt.Sprintf("/ng/api/accounts/%s", accountID), map[string]string{"accountIdentifier": accountID}); err != nil {
+			return "", "", err
+		}
 	}
 	regURL, _ = fetchRegistryURL(apiURL, token, accountID)
 	return accountID, regURL, nil
@@ -765,7 +772,7 @@ func validateAndFetch(apiURL, token string) (accountID, regURL string, err error
 
 func accountIDFromToken(token string) string {
 	parts := strings.SplitN(token, ".", 4)
-	if len(parts) == 4 && parts[0] == "pat" {
+	if len(parts) == 4 && (parts[0] == "pat" || parts[0] == "sat") {
 		return parts[1]
 	}
 	return ""
@@ -830,7 +837,7 @@ func RunSetWizard(ctx *cmdctx.Ctx, in *SetWizardInput) (*WizardResult, error) {
 		delegate.ShowDescription = false
 		delegate.SetHeight(1)
 		delegate.SetSpacing(0)
-		delegate.Styles.SelectedTitle = delegate.Styles.SelectedTitle.Foreground(lipgloss.Color("86")).BorderLeftForeground(lipgloss.Color("86"))
+		delegate.Styles.SelectedTitle = delegate.Styles.SelectedTitle.Foreground(lipgloss.Color(tui.CLIAccent)).BorderLeftForeground(lipgloss.Color(tui.CLIAccent))
 		l := list.New(nil, delegate, 60, 20)
 		l.Title = title
 		l.Styles.Title = st.title

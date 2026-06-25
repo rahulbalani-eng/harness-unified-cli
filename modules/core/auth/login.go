@@ -117,8 +117,11 @@ func LoginHandler(ctx *cmdctx.Ctx) error {
 			// pty but all flags provided — validate URL only
 			if apiURL == "" {
 				apiURL = defaultAPIURL
-			} else if err := auth.ValidateAPIURL(apiURL); err != nil {
-				return err
+			} else {
+				apiURL = auth.NormalizeAPIURL(apiURL)
+				if err := auth.ValidateAPIURL(apiURL); err != nil {
+					return err
+				}
 			}
 		} else {
 			if token == "" {
@@ -126,8 +129,11 @@ func LoginHandler(ctx *cmdctx.Ctx) error {
 			}
 			if apiURL == "" {
 				apiURL = defaultAPIURL
-			} else if err := auth.ValidateAPIURL(apiURL); err != nil {
-				return err
+			} else {
+				apiURL = auth.NormalizeAPIURL(apiURL)
+				if err := auth.ValidateAPIURL(apiURL); err != nil {
+					return err
+				}
 			}
 		}
 

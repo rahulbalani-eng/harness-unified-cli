@@ -677,6 +677,7 @@ commands:
     endpoint:
       path: /har/api/v1/registry/{{auth.scope}}/{{ctx.id}}/+
       item_expr: it.data
+      yaml_pick_expr: it.data
 
   - command: get registry_metadata
     verb: get

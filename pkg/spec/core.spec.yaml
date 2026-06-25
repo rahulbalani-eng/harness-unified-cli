@@ -85,6 +85,19 @@ commands:
     verb: auth
     noun: login
     short: Save credentials to a profile
+    long: |
+      Save Harness credentials to a named profile.
+
+      Interactive mode (default when a terminal is detected and either --api-url or --api-token is not provided):
+        Launches a TUI wizard to enter the API URL, PAT/SAT token, and select an org and project.
+
+      Non-interactive mode (CI / scripting):
+        Provide both --api-url and --api-token to skip the wizard entirely.
+        If --org or --project are omitted the profile is saved without them; run 'harness auth setscope'
+        afterwards to configure the default scope.
+
+      The --api-url flag accepts a harness.io hostname ("app.harness.io") or a full URL
+      ("https://app.harness.io"). Both forms are expanded to a full URL automatically.
     no_auth: true
     handler_type: workflow
     workflow_id: login

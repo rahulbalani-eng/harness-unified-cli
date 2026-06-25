@@ -214,25 +214,26 @@ func ValidateAPIURL(apiURL string) error {
 
 var patSegment = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 
-// ValidatePATFormat returns an error if token does not match pat.<accountId>.<tokenId>.<secret>.
+// ValidatePATFormat returns an error if token does not match pat.<accountId>.<tokenId>.<secret>
+// or sat.<accountId>.<tokenId>.<secret>.
 func ValidatePATFormat(token string) error {
 	parts := strings.SplitN(token, ".", 4)
-	if len(parts) != 4 || parts[0] != "pat" {
-		return fmt.Errorf("invalid PAT format — expected pat.<accountId>.<tokenId>.<secret>")
+	if len(parts) != 4 || (parts[0] != "pat" && parts[0] != "sat") {
+		return fmt.Errorf("invalid PAT/SAT format — expected pat.<accountId>.<tokenId>.<secret> or sat.<accountId>.<tokenId>.<secret>")
 	}
 	for _, p := range parts[1:] {
 		if !patSegment.MatchString(p) {
-			return fmt.Errorf("invalid PAT format — segments must match [A-Za-z0-9_-]+")
+			return fmt.Errorf("invalid PAT/SAT format — segments must match [A-Za-z0-9_-]+")
 		}
 	}
 	return nil
 }
 
-// AccountIDFromToken extracts the account ID from a valid PAT of the form pat.{AccountID}.x.y.
-// Callers must validate the token with ValidatePATFormat before calling this.
+// AccountIDFromToken extracts the account ID from a valid PAT/SAT of the form pat.{AccountID}.x.y
+// or sat.{AccountID}.x.y. Callers must validate the token with ValidatePATFormat before calling this.
 func AccountIDFromToken(token string) string {
 	parts := strings.SplitN(token, ".", 4)
-	if len(parts) == 4 && parts[0] == "pat" {
+	if len(parts) == 4 && (parts[0] == "pat" || parts[0] == "sat") {
 		return parts[1]
 	}
 	return ""

@@ -692,7 +692,7 @@ func (r *Registry) bindExternalCmd(cmd *cobra.Command, cs *spec.CommandSpec) {
 
 // bindWorkflowCmd wires flags and RunE for a workflow-backed command.
 func (r *Registry) bindWorkflowCmd(cmd *cobra.Command, cs *spec.CommandSpec, fn WorkflowFn) {
-	addFlags(cmd.Flags(), specFormat, specJson, specOut, specRaw)
+	addFlags(cmd.Flags(), specFormat, specJson, specYaml, specOut, specRaw)
 	if cs.VerbHandler == VerbList {
 		addFlags(cmd.Flags(), specColumns, specNoHeaders, specListColumns)
 	}
@@ -746,9 +746,9 @@ func (r *Registry) bindEndpointCmdFlags(cmd *cobra.Command, cs *spec.CommandSpec
 
 	switch cs.VerbHandler {
 	case VerbList:
-		addFlags(cmd.Flags(), specFormat, specJson, specColumns, specNoHeaders, specRaw, specListColumns)
+		addFlags(cmd.Flags(), specFormat, specJson, specYaml, specColumns, specNoHeaders, specRaw, specListColumns)
 	case VerbGet:
-		addFlags(cmd.Flags(), specFormat, specJson, specRaw, specFields, specListFields)
+		addFlags(cmd.Flags(), specFormat, specJson, specYaml, specRaw, specFields, specListFields)
 		cmd.RegisterFlagCompletionFunc("fields", func(_ *cobra.Command, _ []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 			fields := r.ResolveCommandFields(cs)
 			ids := make([]string, 0, len(fields))
@@ -759,18 +759,18 @@ func (r *Registry) bindEndpointCmdFlags(cmd *cobra.Command, cs *spec.CommandSpec
 		})
 	case VerbUpdate:
 		if cs.BuiltinFlags.Set {
-			addFlags(cmd.Flags(), specFormat, specJson, specListFields)
+			addFlags(cmd.Flags(), specFormat, specJson, specYaml, specListFields)
 		} else {
-			addFlags(cmd.Flags(), specFormat, specJson)
+			addFlags(cmd.Flags(), specFormat, specJson, specYaml)
 		}
 	case VerbCreate:
 		if ep.CreateStrategy == spec.CreateStrategySetFields {
-			addFlags(cmd.Flags(), specFormat, specJson, specListFields)
+			addFlags(cmd.Flags(), specFormat, specJson, specYaml, specListFields)
 		} else {
-			addFlags(cmd.Flags(), specFormat, specJson)
+			addFlags(cmd.Flags(), specFormat, specJson, specYaml)
 		}
 	default:
-		addFlags(cmd.Flags(), specFormat, specJson)
+		addFlags(cmd.Flags(), specFormat, specJson, specYaml)
 	}
 	addFlag(cmd.Flags(), specOut)
 	if cs.BuiltinFlags.Set {

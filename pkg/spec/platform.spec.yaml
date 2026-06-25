@@ -364,7 +364,6 @@ nouns:
         mutable_path: name
       - id: type
         expr: it.connector.type
-        mutable_path: type
       - id: description
         expr: it.connector.description
         mutable_path: description
@@ -527,6 +526,7 @@ commands:
     handler_type: endpoint
     endpoint:
       method: POST
+      file_body: optional
       path: /ng/api/organizations
       item_expr: it.data.organization
       create_strategy: set-fields
@@ -654,6 +654,7 @@ commands:
     handler_type: endpoint
     endpoint:
       method: POST
+      file_body: optional
       path: /ng/api/projects
       item_expr: it.data
       create_strategy: set-fields
@@ -1074,6 +1075,7 @@ commands:
       del: true
     endpoint:
       method: PUT
+      file_body: optional
       path: /ng/api/connectors
       get_path: /ng/api/connectors/{{ctx.id}}
       update_strategy: get-then-put
@@ -1148,6 +1150,7 @@ commands:
     handler_type: endpoint
     endpoint:
       method: POST
+      file_body: optional
       path: /ng/api/v2/secrets
       item_expr: it.data
       create_strategy: set-fields

@@ -104,6 +104,13 @@ func callEndpointFull(ctx *cmdctx.Ctx, ep *spec.EndpointSpec, extraQueryParams m
 			}
 			return c.PutRaw(path, qp, body, ct)
 		}
+		if ep.CreateBodyWrap != "" {
+			var parsed any
+			if err := json.Unmarshal([]byte(body), &parsed); err != nil {
+				return nil, nil, fmt.Errorf("parsing -f body: %w", err)
+			}
+			return c.Post(path, qp, map[string]any{ep.CreateBodyWrap: parsed})
+		}
 		return c.PostRaw(path, qp, body, ct)
 	}
 

@@ -6,6 +6,7 @@ package hlog
 import (
 	"log/slog"
 	"os"
+	"sync/atomic"
 
 	"github.com/lmittmann/tint"
 	"golang.org/x/term"
@@ -29,8 +30,12 @@ func newHandler(w *os.File, level slog.Level) slog.Handler {
 	return slog.NewTextHandler(w, &slog.HandlerOptions{Level: level})
 }
 
-var logger = slog.New(slog.DiscardHandler)
+var active atomic.Pointer[slog.Logger]
 var pluginName string
+
+func init() {
+	active.Store(slog.New(slog.DiscardHandler))
+}
 
 func applyPlugin(l *slog.Logger) *slog.Logger {
 	if pluginName != "" {
@@ -41,7 +46,7 @@ func applyPlugin(l *slog.Logger) *slog.Logger {
 
 // SetDebug switches the logger to DEBUG level.
 func SetDebug() {
-	logger = applyPlugin(slog.New(newHandler(os.Stderr, slog.LevelDebug)))
+	active.Store(applyPlugin(slog.New(newHandler(os.Stderr, slog.LevelDebug))))
 }
 
 // SetDebugFile opens path for append and switches the logger to DEBUG level writing to that file.
@@ -51,16 +56,27 @@ func SetDebugFile(path string) {
 	if err != nil {
 		return
 	}
-	logger = applyPlugin(slog.New(slog.NewTextHandler(f, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	active.Store(applyPlugin(slog.New(slog.NewTextHandler(f, &slog.HandlerOptions{Level: slog.LevelDebug}))))
 }
 
 // SetPlugin records the plugin name and adds it as an attribute to every subsequent log line.
 func SetPlugin(name string) {
 	pluginName = name
-	logger = logger.With("plugin", name)
+	active.Store(active.Load().With("plugin", name))
 }
 
-func Debug(msg string, args ...any) { logger.Debug(msg, args...) }
-func Info(msg string, args ...any)  { logger.Info(msg, args...) }
-func Warn(msg string, args ...any)  { logger.Warn(msg, args...) }
-func Error(msg string, args ...any) { logger.Error(msg, args...) }
+// SilenceForTUI suppresses log output while a Bubble Tea program owns the
+// terminal. Returns the previous logger so RestoreAfterTUI can swap it back.
+func SilenceForTUI() *slog.Logger {
+	return active.Swap(slog.New(slog.DiscardHandler))
+}
+
+// RestoreAfterTUI restores the logger saved by SilenceForTUI.
+func RestoreAfterTUI(prev *slog.Logger) {
+	active.Store(prev)
+}
+
+func Debug(msg string, args ...any) { active.Load().Debug(msg, args...) }
+func Info(msg string, args ...any)  { active.Load().Info(msg, args...) }
+func Warn(msg string, args ...any)  { active.Load().Warn(msg, args...) }
+func Error(msg string, args ...any) { active.Load().Error(msg, args...) }

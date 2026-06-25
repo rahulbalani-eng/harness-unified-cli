@@ -727,6 +727,9 @@ func (r *Registry) bindWorkflowCmd(cmd *cobra.Command, cs *spec.CommandSpec, fn 
 				cmd.Flags().String(f.Name, f.Default, f.Description)
 			}
 		}
+		if f.Hidden {
+			cmd.Flags().MarkHidden(f.Name) //nolint:errcheck
+		}
 	}
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		ctx, err := buildCtx(cmd, cs, args, r)
@@ -822,6 +825,9 @@ func (r *Registry) bindEndpointCmdFlags(cmd *cobra.Command, cs *spec.CommandSpec
 			} else {
 				cmd.Flags().String(f.Name, f.Default, f.Description)
 			}
+		}
+		if f.Hidden {
+			cmd.Flags().MarkHidden(f.Name)
 		}
 	}
 }

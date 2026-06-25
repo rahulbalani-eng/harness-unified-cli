@@ -126,6 +126,10 @@ commands:
       - name: no-overwrite
         is_bool: true
         description: Error if profile already exists
+      - name: force-save
+        is_bool: true
+        hidden: true
+        description: Save credentials and profile even if post-login steps (org/project picker) fail
 
   - command: auth setscope
     verb: auth

@@ -18,6 +18,7 @@ import (
 	pkgauth "github.com/harness/harness-cli/pkg/auth"
 	hclient "github.com/harness/harness-cli/pkg/client"
 	"github.com/harness/harness-cli/pkg/cmdctx"
+	"github.com/harness/harness-cli/pkg/hlog"
 )
 
 // WizardResult is returned by RunLoginWizard on success.
@@ -779,6 +780,8 @@ func accountIDFromToken(token string) string {
 func RunLoginWizard(ctx *cmdctx.Ctx, existing *WizardExisting) (*WizardResult, error) {
 	m := newWizardModel(existing)
 	m.cmdCtx = ctx
+	prev := hlog.SilenceForTUI()
+	defer hlog.RestoreAfterTUI(prev)
 	p := tea.NewProgram(m)
 	final, err := p.Run()
 	if err != nil {
@@ -868,6 +871,8 @@ func RunSetWizard(ctx *cmdctx.Ctx, in *SetWizardInput) (*WizardResult, error) {
 		height:           24,
 	}
 
+	prev := hlog.SilenceForTUI()
+	defer hlog.RestoreAfterTUI(prev)
 	p := tea.NewProgram(m)
 	final, err := p.Run()
 	if err != nil {

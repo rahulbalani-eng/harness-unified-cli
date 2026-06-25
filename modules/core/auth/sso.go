@@ -26,7 +26,7 @@ import (
 )
 
 const (
-	mcpBaseURL         = "https://mcp.harness.io"
+	mcpBaseURL         = "https://mcp.harness.io/cli"
 	ssoCallbackPath    = "/oauth/callback"
 	ssoPort            = 57380
 	ssoCallbackTimeout = 5 * time.Minute
@@ -41,6 +41,7 @@ const (
 func LoginSSOHandler(ctx *cmdctx.Ctx) error {
 	overwrite := cmdctx.GetBool(ctx.FlagValues, "overwrite")
 	noOverwrite := cmdctx.GetBool(ctx.FlagValues, "no-overwrite")
+	forceSave := cmdctx.GetBool(ctx.FlagValues, "force-save")
 	if overwrite && noOverwrite {
 		return fmt.Errorf("--overwrite and --no-overwrite are mutually exclusive")
 	}
@@ -95,13 +96,16 @@ func LoginSSOHandler(ctx *cmdctx.Ctx) error {
 			AuthType:  auth.AuthTypeSSO,
 		})
 		if werr != nil {
-			return werr
-		}
-		if result == nil {
+			if !forceSave {
+				return werr
+			}
+			fmt.Fprintf(os.Stderr, "WARNING: org/project picker failed (%v) — saving profile anyway (--force-save)\n\n", werr)
+		} else if result == nil {
 			return fmt.Errorf("canceled by user — config not written")
+		} else {
+			orgID = result.OrgID
+			projectID = result.Project
 		}
-		orgID = result.OrgID
-		projectID = result.Project
 	}
 
 	cfg.Profiles[profileName] = &config.Profile{

@@ -56,6 +56,7 @@ type remoteExecution struct {
 	ID                   string `json:"id"`
 	PipelineExecutionID  string `json:"pipeline_execution_id"`
 	PipelineExecutionURL string `json:"pipeline_execution_url"`
+	RepositoryBranch     string `json:"repository_branch,omitempty"`
 }
 
 type iacmAPIError struct {
@@ -94,6 +95,7 @@ func executeWorkspaceHandler(ctx *cmdctx.Ctx) error {
 	targets := cmdctx.GetStringSlice(ctx.FlagValues, "target")
 	replacements := cmdctx.GetStringSlice(ctx.FlagValues, "replace")
 	force := cmdctx.GetBool(ctx.FlagValues, "force")
+	branch := cmdctx.GetString(ctx.FlagValues, "branch")
 
 	bgCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -106,7 +108,7 @@ func executeWorkspaceHandler(ctx *cmdctx.Ctx) error {
 	}()
 
 	hc := &http.Client{Timeout: 60 * time.Second}
-	return executePlan(bgCtx, ctx, hc, a, orgID, projectID, workspaceID, targets, replacements, force)
+	return executePlan(bgCtx, ctx, hc, a, orgID, projectID, workspaceID, targets, replacements, force, branch)
 }
 
 func loadWorkspaceConfig() (*workspaceConfig, error) {
@@ -136,6 +138,7 @@ func executePlan(
 	orgID, projectID, workspaceID string,
 	targets, replacements []string,
 	force bool,
+	branch string,
 ) error {
 	fmt.Println("Fetching workspace information...")
 	ws, err := getWorkspace(bgCtx, hc, a, orgID, projectID, workspaceID)
@@ -150,26 +153,39 @@ func executePlan(
 	}
 	fmt.Printf("Default pipeline: %s\n", defaultPipeline)
 
-	wd, err := os.Getwd()
-	if err != nil {
-		return fmt.Errorf("getting working directory: %w", err)
-	}
-	repoRoot, warning, err := resolveRepoRoot(wd, ws)
-	if err != nil {
-		return err
-	}
-	fmt.Println(warning)
+	var zipData []byte
 
-	if !force && !console.PromptYesNo("Do you want to continue?") {
-		return errors.New("canceled")
-	}
+	if branch != "" {
+		// Branch override: skip local code upload
+		fmt.Printf("Using code from branch: %s\n", branch)
+		fmt.Println("Skipping local code upload (using git branch)")
 
-	fmt.Println("Zipping source code...")
-	zipData, err := zipSourceCode(repoRoot)
-	if err != nil {
-		return fmt.Errorf("zipping source code: %w", err)
+		if !force && !console.PromptYesNo("Do you want to continue?") {
+			return errors.New("canceled")
+		}
+	} else {
+		// No branch override: existing behavior (zip and upload local code)
+		wd, err := os.Getwd()
+		if err != nil {
+			return fmt.Errorf("getting working directory: %w", err)
+		}
+		repoRoot, warning, err := resolveRepoRoot(wd, ws)
+		if err != nil {
+			return err
+		}
+		fmt.Println(warning)
+
+		if !force && !console.PromptYesNo("Do you want to continue?") {
+			return errors.New("canceled")
+		}
+
+		fmt.Println("Zipping source code...")
+		zipData, err = zipSourceCode(repoRoot)
+		if err != nil {
+			return fmt.Errorf("zipping source code: %w", err)
+		}
+		fmt.Printf("Source code zipped (%d bytes)\n", len(zipData))
 	}
-	fmt.Printf("Source code zipped (%d bytes)\n", len(zipData))
 
 	customArgs := map[string][]string{}
 	if len(targets) > 0 {
@@ -180,15 +196,18 @@ func executePlan(
 	}
 
 	fmt.Println("Creating remote execution...")
-	exec, err := createRemoteExecution(bgCtx, hc, a, orgID, projectID, workspaceID, customArgs)
+	exec, err := createRemoteExecution(bgCtx, hc, a, orgID, projectID, workspaceID, customArgs, branch)
 	if err != nil {
 		return fmt.Errorf("creating remote execution: %w", err)
 	}
 
-	fmt.Println("Uploading source code...")
-	exec, err = uploadRemoteExecution(bgCtx, hc, a, orgID, projectID, workspaceID, exec.ID, zipData)
-	if err != nil {
-		return fmt.Errorf("uploading source code: %w", err)
+	// Only upload if we have zip data (i.e., no branch override)
+	if zipData != nil {
+		fmt.Println("Uploading source code...")
+		exec, err = uploadRemoteExecution(bgCtx, hc, a, orgID, projectID, workspaceID, exec.ID, zipData)
+		if err != nil {
+			return fmt.Errorf("uploading source code: %w", err)
+		}
 	}
 
 	fmt.Println("Triggering pipeline execution...")
@@ -264,9 +283,15 @@ func getWorkspace(ctx context.Context, hc *http.Client, a *auth.ResolvedAuth, or
 	return &ws, nil
 }
 
-func createRemoteExecution(ctx context.Context, hc *http.Client, a *auth.ResolvedAuth, org, project, workspaceID string, customArgs map[string][]string) (*remoteExecution, error) {
+func createRemoteExecution(ctx context.Context, hc *http.Client, a *auth.ResolvedAuth, org, project, workspaceID string, customArgs map[string][]string, branch string) (*remoteExecution, error) {
 	path := fmt.Sprintf("/gateway/iacm/api/orgs/%s/projects/%s/workspaces/%s/remote-executions", org, project, workspaceID)
 	body := map[string]any{"custom_arguments": customArgs}
+
+	// Add repository_branch if specified
+	if branch != "" {
+		body["repository_branch"] = branch
+	}
+
 	var exec remoteExecution
 	if err := doIACM(ctx, hc, a, "POST", path, body, &exec); err != nil {
 		return nil, err

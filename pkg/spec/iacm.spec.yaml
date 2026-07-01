@@ -235,6 +235,8 @@ commands:
       - name: replace
         description: "Variable replacement in key=value format (can be specified multiple times)"
         is_multi: true
+      - name: branch
+        description: "Git branch to use for execution (overrides workspace default)"
       - name: force
         description: "Skip confirmation prompt"
         is_bool: true

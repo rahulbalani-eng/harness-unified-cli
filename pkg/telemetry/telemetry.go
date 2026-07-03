@@ -34,6 +34,7 @@ import (
 
 	"github.com/harness/harness-cli/pkg/cmdctx"
 	"github.com/harness/harness-cli/pkg/hbase"
+	"github.com/harness/harness-cli/pkg/hlog"
 )
 
 // ErrorCategory is a coarse, enum-safe classification of a command failure.
@@ -41,12 +42,16 @@ import (
 type ErrorCategory string
 
 const (
-	ErrorCategoryAuth       ErrorCategory = "auth_error"
-	ErrorCategoryAPI        ErrorCategory = "api_error"
-	ErrorCategoryNotFound   ErrorCategory = "not_found"
-	ErrorCategoryValidation ErrorCategory = "validation_error"
-	ErrorCategoryTimeout    ErrorCategory = "timeout"
-	ErrorCategoryUnknown    ErrorCategory = "unknown"
+	ErrorCategoryAuth        ErrorCategory = "auth_error"
+	ErrorCategoryAPI         ErrorCategory = "api_error"
+	ErrorCategoryNotFound    ErrorCategory = "not_found"
+	ErrorCategoryValidation  ErrorCategory = "validation_error"
+	ErrorCategoryInvalidVerb ErrorCategory = "invalid_verb"
+	ErrorCategoryInvalidNoun ErrorCategory = "invalid_noun"
+	ErrorCategoryInvalidFlag ErrorCategory = "invalid_flag"
+	ErrorCategoryBadUsage    ErrorCategory = "bad_usage" // fallback when more specific bucket can't be determined
+	ErrorCategoryTimeout     ErrorCategory = "timeout"
+	ErrorCategoryUnknown     ErrorCategory = "unknown"
 )
 
 // Env captures static facts about the runtime environment. Call [NewEnv]
@@ -95,6 +100,12 @@ type CommandIntent struct {
 	// Never the full email address.
 	UserDomain string
 
+	// TokenKind is the type of credential in use: "pat", "sat", "jwt", or "".
+	TokenKind string
+
+	// AuthSource is "profile" when auth came from config file, "env" when from env vars.
+	AuthSource string
+
 	// RunID correlates all API calls from this invocation. Mirrors hbase.RunID.
 	RunID string
 
@@ -110,6 +121,8 @@ type CommandError struct {
 	Module     string
 	AccountID  string
 	UserDomain string
+	TokenKind  string
+	AuthSource string
 	RunID      string
 
 	Category   ErrorCategory
@@ -142,6 +155,13 @@ func SetDisabled(v bool) {
 // RecordIntent emits a [CommandIntent]. No-op when no backend is set,
 // HARNESS_NO_TELEMETRY=1, or the build is a dev build.
 func RecordIntent(e CommandIntent) {
+	hlog.Debug("telemetry: intent",
+		"verb", e.Verb, "noun", e.Noun, "module", e.Module,
+		"flags", e.FlagsSet, "account", e.AccountID, "domain", e.UserDomain,
+		"token_kind", e.TokenKind, "auth_source", e.AuthSource,
+		"run_id", e.RunID, "os", e.Env.OS, "arch", e.Env.Arch,
+		"version", e.Env.Version, "is_tty", e.Env.IsTTY,
+		"is_pipeline", e.Env.IsPipelineExecution)
 	if !shouldRecord(e.Env) {
 		return
 	}
@@ -150,6 +170,11 @@ func RecordIntent(e CommandIntent) {
 
 // RecordError emits a [CommandError]. Same gating as [RecordIntent].
 func RecordError(e CommandError) {
+	hlog.Debug("telemetry: error",
+		"verb", e.Verb, "noun", e.Noun, "module", e.Module,
+		"category", e.Category, "duration_ms", e.DurationMs,
+		"account", e.AccountID, "token_kind", e.TokenKind,
+		"auth_source", e.AuthSource, "run_id", e.RunID)
 	if !shouldRecord(e.Env) {
 		return
 	}

@@ -37,6 +37,8 @@ type ResolvedAuth struct {
 	OrgID           string
 	ProjectID       string
 	RegistryURL     string
+	Email           string    // user email from profile; empty for env-var auth or legacy profiles
+	TokenKind       TokenKind // pat, sat, jwt, or "" (unknown)
 
 	// Exactly one of these is set depending on AuthType.
 	PATToken     string // set when AuthType == AuthTypePAT
@@ -88,6 +90,7 @@ func Load(profileFlag string) (*ResolvedAuth, error) {
 			ProjectID:   os.Getenv(hbase.EnvProject),
 			APIUrl:      apiURL,
 			RegistryURL: registryURL,
+			TokenKind:   TokenType(key),
 		}, nil
 	}
 	// 3. HARNESS_PROFILE env var → named profile from config
@@ -198,6 +201,8 @@ func resolveProfile(name string) (*ResolvedAuth, error) {
 		OrgID:       p.OrgID,
 		ProjectID:   p.ProjectID,
 		RegistryURL: registryURL,
+		Email:       p.Email,
+		TokenKind:   TokenType(profileCreds.Token),
 	}
 	if authType == AuthTypeSSO {
 		r.SSOToken = profileCreds.Token

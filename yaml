@@ -1,0 +1,24 @@
+[1m Identifier           [0m[1m Name                  [0m[1m Type    [0m[1m Updated             [0m
+[1m──────────────────────[0m[1m───────────────────────[0m[1m─────────[0m[1m─────────────────────[0m
+ AnsibleGoldenDynamic  AnsibleGoldenDynamics  dynamic  2026-06-23 16:12:14 
+ atest                 atest                  manual   2026-06-23 16:15:51 
+ AwsDynamic            AwsDynamic             dynamic  2026-06-18 09:36:16 
+ AwsDynamicQA          AwsDynamicQA           dynamic  2026-06-17 21:45:26 
+ AWSStatic             AWSStatic              manual   2026-06-23 15:12:33 
+ awsStaticWindows      awsStaticWindows       manual   2026-06-23 16:12:54 
+ azurePluginInv        azurePluginInv         plugin   2026-06-18 09:35:53 
+ crystal_dynamic       crystal_dynamic        dynamic  2026-06-23 15:47:41 
+ GCPPlugin             GCPPlugin              plugin   2026-06-23 15:19:51 
+ kseniadynamic         ksenia-dynamic         dynamic  2026-04-28 12:20:03 
+ localhost             localhost              manual   2026-04-10 08:56:07 
+ plugininv             My Plugin Inventory    plugin   2026-06-23 15:42:37 
+ newStaticInv          newStaticInv           manual   2026-04-28 09:54:45 
+ new_static_testing    new_static_testing     manual   2026-06-23 15:45:33 
+ asdf                  Plugin                 plugin   2026-06-23 14:47:05 
+ plugin1               plugin1                manual   2026-05-11 16:33:47 
+ plugin123             plugin123              plugin   2026-06-23 16:13:43 
+ plugin2               plugin2                manual   2026-05-11 16:33:57 
+ plugin3               plugin3                manual   2026-05-11 16:34:05 
+ plugindel             plugindel              plugin   2026-05-04 11:29:03 
+─────
+Showing 1-20 of 54

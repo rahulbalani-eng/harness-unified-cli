@@ -37,6 +37,23 @@ nouns:
       - id: updated
         expr: epochMs(it.updated)
 
+  - noun: state
+    short_desc: Terraform state resources managed by a workspace.
+    noun_aliases: [states]
+    fields:
+      - id: address
+        expr: it.address
+      - id: type
+        expr: it.type
+      - id: name
+        expr: it.name
+      - id: mode
+        expr: it.mode
+      - id: module
+        expr: it.module
+      - id: index
+        expr: it.index
+
   - noun: host
     short_desc: An IACM Ansible host tracked across inventories.
     noun_aliases: [hosts]
@@ -473,15 +490,134 @@ commands:
       yaml_pick_expr: it
 
   # ── state operations ──────────────────────────────────────────────────────────
-  # NOTE: State operation commands temporarily disabled - need workflow handler implementation
-  # See CLI_TESTING_GUIDE.md for implementation details
-  # TODO: Implement workflow handlers in modules/iacm/state.go
+  - command: list state
+    verb: list
+    noun: state
+    short: List all resources in workspace terraform state
+    long: |
+      List all resources in the workspace's current terraform state file.
 
-  # - command: state list
-  #   verb: state
-  #   noun: list
-  #   [... 140 lines commented out ...]
+      Shows resource addresses including modules, count/for_each indexing,
+      and data sources.
 
-  # For now, test state operations via API:
-  # curl "https://app.harness.io/gateway/iacm/api/orgs/$ORG/projects/$PROJECT/workspaces/$WORKSPACE/state/resources" \
-  #   -H "Harness-Account: $ACCOUNT" -H "x-api-key: $TOKEN"
+      Examples:
+        harness list state my-workspace
+        harness list state my-workspace --format=json
+    completion_noun: workspace
+    handler_type: endpoint
+    endpoint:
+      path: /gateway/iacm/api/orgs/{{auth.org}}/projects/{{auth.project}}/workspaces/{{ctx.id}}/state/resources
+      items_expr: it.resources
+      columns: [address, type, mode]
+
+  - command: get state
+    verb: get
+    noun: state
+    short: Show details of a specific resource in state
+    long: |
+      Show the full resource definition from the workspace's terraform state.
+
+      Displays attributes, dependencies, and provider information.
+
+      Examples:
+        harness get state my-workspace --address=aws_instance.web
+        harness get state my-workspace --address='module.vpc.aws_subnet.public[0]'
+    completion_noun: workspace
+    handler_type: endpoint
+    flags:
+      - name: address
+        description: "Resource address (e.g., aws_instance.web)"
+        required: true
+    endpoint:
+      path: /gateway/iacm/api/orgs/{{auth.org}}/projects/{{auth.project}}/workspaces/{{ctx.id}}/state/resources/{{flags.address}}
+      item_expr: it
+
+  - command: delete state
+    verb: delete
+    noun: state
+    short: Remove a resource from state (orphan it)
+    long: |
+      Remove a resource from the workspace's terraform state tracking.
+
+      The infrastructure resource remains unchanged - only the state entry is removed.
+      Creates a new state version. Workspace must not be locked.
+
+      Examples:
+        harness delete state my-workspace --address=aws_instance.old
+        harness delete state my-workspace --address='aws_instance.servers[0]'
+    completion_noun: workspace
+    handler_type: endpoint
+    flags:
+      - name: address
+        description: "Resource address to remove"
+        required: true
+      - name: reason
+        description: "Reason for removal (for audit log)"
+    endpoint:
+      method: DELETE
+      path: /gateway/iacm/api/orgs/{{auth.org}}/projects/{{auth.project}}/workspaces/{{ctx.id}}/state/resources/{{flags.address}}
+      body:
+        reason: flags.reason
+
+  - command: update state
+    verb: update
+    noun: state
+    short: Move or rename a resource in state
+    long: |
+      Rename a resource address in the workspace's terraform state.
+
+      Creates a new state version. Workspace must not be locked.
+
+      Examples:
+        harness update state my-workspace --source=aws_instance.old --destination=aws_instance.new
+    completion_noun: workspace
+    handler_type: endpoint
+    flags:
+      - name: source
+        description: "Source resource address"
+        required: true
+      - name: destination
+        description: "Destination resource address"
+        required: true
+      - name: reason
+        description: "Reason for the move (for audit log)"
+    endpoint:
+      method: POST
+      path: /gateway/iacm/api/orgs/{{auth.org}}/projects/{{auth.project}}/workspaces/{{ctx.id}}/state/resources/move
+      body:
+        source: flags.source
+        destination: flags.destination
+        reason: flags.reason
+
+  - command: execute state
+    verb: execute
+    noun: state
+    short: Replace provider namespace in state
+    long: |
+      Update all resources in state from old provider to new provider.
+
+      Used for provider migrations (e.g., legacy to registry format).
+      Creates a new state version. Workspace must not be locked.
+
+      Examples:
+        harness execute state my-workspace \\
+          --from='registry.terraform.io/-/aws' \\
+          --to='registry.terraform.io/hashicorp/aws'
+    completion_noun: workspace
+    handler_type: endpoint
+    flags:
+      - name: from
+        description: "Old provider address"
+        required: true
+      - name: to
+        description: "New provider address"
+        required: true
+      - name: reason
+        description: "Reason for replacement (for audit log)"
+    endpoint:
+      method: POST
+      path: /gateway/iacm/api/orgs/{{auth.org}}/projects/{{auth.project}}/workspaces/{{ctx.id}}/state/providers/replace
+      body:
+        from: flags.from
+        to: flags.to
+        reason: flags.reason

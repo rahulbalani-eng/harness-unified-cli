@@ -501,12 +501,18 @@ commands:
       and data sources.
 
       Examples:
-        harness list state my-workspace
-        harness list state my-workspace --format=json
+        harness list state --workspace=my-workspace
+        harness list state --workspace=my-workspace --format=json
     completion_noun: workspace
     handler_type: endpoint
+    flags:
+      - name: workspace
+        description: "Workspace identifier"
+        required: true
     endpoint:
-      path: /gateway/iacm/api/orgs/{{auth.org}}/projects/{{auth.project}}/workspaces/{{ctx.id}}/state/resources
+      path: /gateway/iacm/api/orgs/{{auth.org}}/projects/{{auth.project}}/workspaces/{{flags.workspace}}/state/resources
+      request_headers:
+        Harness-Account: auth.account
       items_expr: it.resources
       columns: [address, type, mode]
 
@@ -519,9 +525,13 @@ commands:
 
       Displays attributes, dependencies, and provider information.
 
+      NOTE: This command returns detailed nested data. Use --format=json (recommended)
+      or --format=yaml for proper display. Table format shows limited summary only.
+
       Examples:
-        harness get state my-workspace --address=aws_instance.web
-        harness get state my-workspace --address='module.vpc.aws_subnet.public[0]'
+        harness get state my-workspace --address=aws_instance.web --format=json
+        harness get state my-workspace --address='module.vpc.aws_subnet.public[0]' --format=json
+        harness get state my-workspace --address=data.aws_ami.ubuntu --format=yaml
     completion_noun: workspace
     handler_type: endpoint
     flags:
@@ -530,6 +540,8 @@ commands:
         required: true
     endpoint:
       path: /gateway/iacm/api/orgs/{{auth.org}}/projects/{{auth.project}}/workspaces/{{ctx.id}}/state/resources/{{flags.address}}
+      request_headers:
+        Harness-Account: auth.account
       item_expr: it
 
   - command: delete state
@@ -556,7 +568,14 @@ commands:
     endpoint:
       method: DELETE
       path: /gateway/iacm/api/orgs/{{auth.org}}/projects/{{auth.project}}/workspaces/{{ctx.id}}/state/resources/{{flags.address}}
+      request_headers:
+        Harness-Account: auth.account
       body:
+        account: auth.account
+        org: auth.org
+        project: auth.project
+        workspace: ctx.id
+        address: flags.address
         reason: flags.reason
 
   - command: update state
@@ -584,7 +603,13 @@ commands:
     endpoint:
       method: POST
       path: /gateway/iacm/api/orgs/{{auth.org}}/projects/{{auth.project}}/workspaces/{{ctx.id}}/state/resources/move
+      request_headers:
+        Harness-Account: auth.account
       body:
+        account: auth.account
+        org: auth.org
+        project: auth.project
+        workspace: ctx.id
         source: flags.source
         destination: flags.destination
         reason: flags.reason
@@ -617,7 +642,13 @@ commands:
     endpoint:
       method: POST
       path: /gateway/iacm/api/orgs/{{auth.org}}/projects/{{auth.project}}/workspaces/{{ctx.id}}/state/providers/replace
+      request_headers:
+        Harness-Account: auth.account
       body:
+        account: auth.account
+        org: auth.org
+        project: auth.project
+        workspace: ctx.id
         from: flags.from
         to: flags.to
         reason: flags.reason

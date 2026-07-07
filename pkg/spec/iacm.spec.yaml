@@ -554,6 +554,9 @@ commands:
       The infrastructure resource remains unchanged - only the state entry is removed.
       Creates a new state version. Workspace must not be locked.
 
+      KNOWN ISSUE: This command currently requires using curl directly.
+      See STATE-OPERATIONS-TESTING.md for curl examples.
+
       Examples:
         harness delete state my-workspace --address=aws_instance.old
         harness delete state my-workspace --address='aws_instance.servers[0]'
@@ -570,7 +573,8 @@ commands:
       path: /gateway/iacm/api/orgs/{{auth.org}}/projects/{{auth.project}}/workspaces/{{ctx.id}}/state/resources/{{flags.address}}
       request_headers:
         Harness-Account: auth.account
-      body:
+        Content-Type: application/json
+      body_params:
         account: auth.account
         org: auth.org
         project: auth.project
@@ -586,6 +590,9 @@ commands:
       Rename a resource address in the workspace's terraform state.
 
       Creates a new state version. Workspace must not be locked.
+
+      KNOWN ISSUE: This command currently requires using curl directly.
+      See STATE-OPERATIONS-TESTING.md for curl examples.
 
       Examples:
         harness update state my-workspace --source=aws_instance.old --destination=aws_instance.new
@@ -605,7 +612,8 @@ commands:
       path: /gateway/iacm/api/orgs/{{auth.org}}/projects/{{auth.project}}/workspaces/{{ctx.id}}/state/resources/move
       request_headers:
         Harness-Account: auth.account
-      body:
+        Content-Type: application/json
+      body_params:
         account: auth.account
         org: auth.org
         project: auth.project
@@ -644,7 +652,7 @@ commands:
       path: /gateway/iacm/api/orgs/{{auth.org}}/projects/{{auth.project}}/workspaces/{{ctx.id}}/state/providers/replace
       request_headers:
         Harness-Account: auth.account
-      body:
+      body_params:
         account: auth.account
         org: auth.org
         project: auth.project

@@ -26,9 +26,11 @@ package telemetry
 
 import (
 	"os"
+	"regexp"
 	"runtime"
 	"strings"
 	"syscall"
+	"time"
 
 	"golang.org/x/term"
 
@@ -66,6 +68,14 @@ type Env struct {
 	IsTTY               bool // stdout is an interactive terminal
 	IsPipelineExecution bool
 	PipelineID          string // HARNESS_PIPELINEID; empty when IsPipelineExecution is false
+
+	// AIAgent is a standardized identifier for the coding agent the CLI is
+	// running under (e.g. "claude-code", "cursor"), or "" if none is detected.
+	// See [DetectAgent].
+	AIAgent string
+
+	Locale   string // from LANG/LC_ALL/LC_CTYPE, e.g. "en_US.UTF-8"
+	Timezone string // IANA name from the local timezone database, e.g. "America/Los_Angeles"
 }
 
 // NewEnv captures the current runtime environment. Call once at startup.
@@ -79,7 +89,44 @@ func NewEnv() Env {
 		IsTTY:               term.IsTerminal(int(syscall.Stdout)),
 		IsPipelineExecution: pipelineID != "",
 		PipelineID:          pipelineID,
+		AIAgent:             DetectAgent(),
+		Locale:              locale(),
+		Timezone:            timezone(),
 	}
+}
+
+// localePattern matches a bare POSIX/BCP-47-ish locale with the
+// encoding/modifier suffix already stripped: a 2-3 letter language code
+// optionally followed by a territory, e.g. "en", "en_US", "zh_Hans_CN".
+// The special POSIX locales "C" and "POSIX" are also accepted.
+var localePattern = regexp.MustCompile(`^(?:[a-z]{2,3}(?:_[A-Za-z]{2,4}){0,2}|C|POSIX)$`)
+
+// locale returns the first non-empty of LC_ALL, LC_CTYPE, LANG — the
+// standard POSIX precedence order for locale resolution — with the
+// encoding/modifier suffix stripped (e.g. "en_US.UTF-8" -> "en_US").
+// Returns "" if the result doesn't look like a valid locale, since these
+// env vars are user-controlled and can contain arbitrary garbage.
+func locale() string {
+	for _, k := range []string{"LC_ALL", "LC_CTYPE", "LANG"} {
+		v := os.Getenv(k)
+		if v == "" {
+			continue
+		}
+		if i := strings.IndexAny(v, ".@"); i >= 0 {
+			v = v[:i]
+		}
+		if localePattern.MatchString(v) {
+			return v
+		}
+		return ""
+	}
+	return ""
+}
+
+// timezone returns the IANA name of the local timezone (e.g.
+// "America/Los_Angeles"), resolved from the system timezone database.
+func timezone() string {
+	return time.Local.String()
 }
 
 // CommandIntent is emitted once per invocation before the command executes.
@@ -178,7 +225,8 @@ func RecordIntent(e CommandIntent) {
 		"token_kind", e.TokenKind, "auth_source", e.AuthSource,
 		"run_id", e.RunID, "os", e.Env.OS, "arch", e.Env.Arch,
 		"version", e.Env.Version, "is_tty", e.Env.IsTTY,
-		"is_pipeline", e.Env.IsPipelineExecution)
+		"is_pipeline", e.Env.IsPipelineExecution,
+		"aiagent", e.Env.AIAgent, "locale", e.Env.Locale, "timezone", e.Env.Timezone)
 	if !shouldRecord(e.Env) {
 		return
 	}

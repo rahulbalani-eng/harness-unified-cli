@@ -63,7 +63,10 @@ func (s *SegmentBackend) RecordIntent(e CommandIntent) {
 			Set("version", e.Env.Version).
 			Set("is_tty", e.Env.IsTTY).
 			Set("is_pipeline", e.Env.IsPipelineExecution).
-			Set("is_dev", e.Env.IsDev),
+			Set("is_dev", e.Env.IsDev).
+			Set("aiagent", e.Env.AIAgent).
+			Set("locale", e.Env.Locale).
+			Set("timezone", e.Env.Timezone),
 	})
 }
 
@@ -86,6 +89,9 @@ func (s *SegmentBackend) RecordError(e CommandError) {
 			Set("os", e.Env.OS).
 			Set("arch", e.Env.Arch).
 			Set("version", e.Env.Version).
-			Set("is_dev", e.Env.IsDev),
+			Set("is_dev", e.Env.IsDev).
+			Set("aiagent", e.Env.AIAgent).
+			Set("locale", e.Env.Locale).
+			Set("timezone", e.Env.Timezone),
 	})
 }

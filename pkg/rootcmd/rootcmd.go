@@ -10,16 +10,16 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/harness/harness-cli/pkg/cmdctx"
-	"github.com/harness/harness-cli/pkg/console"
-	"github.com/harness/harness-cli/pkg/hbase"
-	"github.com/harness/harness-cli/pkg/hlog"
-	"github.com/harness/harness-cli/modules/core/mgmt"
-	"github.com/harness/harness-cli/pkg/registry"
-	"github.com/harness/harness-cli/pkg/spec"
-	"github.com/harness/harness-cli/pkg/specloader"
-	"github.com/harness/harness-cli/pkg/release"
-	"github.com/harness/harness-cli/pkg/telemetry"
+	"github.com/harness/cli/modules/core/mgmt"
+	"github.com/harness/cli/pkg/cmdctx"
+	"github.com/harness/cli/pkg/console"
+	"github.com/harness/cli/pkg/hbase"
+	"github.com/harness/cli/pkg/hlog"
+	"github.com/harness/cli/pkg/registry"
+	"github.com/harness/cli/pkg/release"
+	"github.com/harness/cli/pkg/spec"
+	"github.com/harness/cli/pkg/specloader"
+	"github.com/harness/cli/pkg/telemetry"
 )
 
 // MaybeRunBackgroundUpdateCheck exits if this invocation is the background update subprocess.

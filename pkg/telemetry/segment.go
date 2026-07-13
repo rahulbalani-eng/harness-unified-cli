@@ -14,12 +14,12 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/harness/harness-cli/pkg/hbase"
+	"github.com/harness/cli/pkg/hbase"
 )
 
 // segmentWriteKey is injected at build time via ldflags:
 //
-//	-X github.com/harness/harness-cli/pkg/telemetry.segmentWriteKey=<key>
+//	-X github.com/harness/cli/pkg/telemetry.segmentWriteKey=<key>
 var segmentWriteKey string
 
 const (

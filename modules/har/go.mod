@@ -1,4 +1,4 @@
-module github.com/harness/harness-cli/modules/har
+module github.com/harness/cli/modules/har
 
 go 1.26
 
@@ -6,7 +6,7 @@ require (
 	github.com/gobwas/glob v0.2.3
 	github.com/google/go-containerregistry v0.20.6
 	github.com/google/uuid v1.6.0
-	github.com/harness/harness-cli v0.0.0
+	github.com/harness/cli v0.0.0
 	github.com/hashicorp/go-retryablehttp v0.7.8
 	github.com/jedib0t/go-pretty/v6 v6.8.2
 	github.com/oapi-codegen/runtime v1.4.1
@@ -133,4 +133,4 @@ require (
 	sigs.k8s.io/yaml v1.6.0 // indirect
 )
 
-replace github.com/harness/harness-cli => ../../
+replace github.com/harness/cli => ../../

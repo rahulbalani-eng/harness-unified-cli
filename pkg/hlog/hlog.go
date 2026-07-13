@@ -15,7 +15,7 @@ import (
 // logState holds all settings that influence how the logger is built.
 // reinit() reads this and rebuilds the active logger from scratch.
 type logState struct {
-	file       *os.File  // nil means stderr
+	file       *os.File // nil means stderr
 	level      slog.Level
 	pluginName string
 }

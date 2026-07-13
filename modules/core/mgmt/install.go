@@ -19,11 +19,11 @@ import (
 
 	"golang.org/x/mod/semver"
 
-	"github.com/harness/harness-cli/pkg/cmdctx"
-	"github.com/harness/harness-cli/pkg/hbase"
-	"github.com/harness/harness-cli/pkg/hlog"
-	"github.com/harness/harness-cli/pkg/plugin"
-	"github.com/harness/harness-cli/pkg/release"
+	"github.com/harness/cli/pkg/cmdctx"
+	"github.com/harness/cli/pkg/hbase"
+	"github.com/harness/cli/pkg/hlog"
+	"github.com/harness/cli/pkg/plugin"
+	"github.com/harness/cli/pkg/release"
 )
 
 var reReleaseVersion = regexp.MustCompile(`^v\d+\.\d+\.\d+$`)
@@ -301,7 +301,6 @@ func InstallModuleHandler(ctx *cmdctx.Ctx) error {
 	fmt.Printf("Installed module %q %s to %s/%s\n", moduleName, version, installDir, binaryName)
 	return nil
 }
-
 
 func detectPlatform() (string, error) {
 	var os_, arch string

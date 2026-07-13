@@ -21,8 +21,8 @@ import (
 	"golang.org/x/mod/semver"
 	"golang.org/x/term"
 
-	"github.com/harness/harness-cli/pkg/hbase"
-	"github.com/harness/harness-cli/pkg/hlog"
+	"github.com/harness/cli/pkg/hbase"
+	"github.com/harness/cli/pkg/hlog"
 )
 
 const (

@@ -174,6 +174,7 @@ type logViewModel struct {
 	activeTab rightTab
 
 	saveModal   bool
+	saveTab     rightTab // which tab's content is being saved (Logs, Inputs, or Outputs)
 	saveInput   string
 	saveStatus  string // "" = typing, error message, or "saved to <file>"
 	saveDone    bool   // true after successful write, waiting for dismiss
@@ -332,23 +333,23 @@ func (m logViewModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					ss.cancel()
 				}
 				return m, tea.Quit
-			case "esc", "n":
+			case "esc":
 				if m.saveConfirm {
-					// "n" or esc on confirm → back to filename input
+					// esc on confirm dismisses the whole modal
+					m.saveConfirm = false
+				}
+				m.saveModal = false
+				m.saveInput = ""
+				m.saveStatus = ""
+				m.saveDone = false
+			case "n":
+				if m.saveConfirm {
+					// "n" on confirm → back to filename input
 					m.saveConfirm = false
 					m.saveStatus = ""
-					if msg.String() == "esc" {
-						// esc from confirm dismisses the whole modal
-						m.saveModal = false
-						m.saveInput = ""
-						m.saveDone = false
-					}
-				} else {
-					m.saveModal = false
-					m.saveInput = ""
+				} else if !m.saveDone {
+					m.saveInput += "n"
 					m.saveStatus = ""
-					m.saveDone = false
-					m.saveConfirm = false
 				}
 			case "enter":
 				if m.saveDone {
@@ -362,15 +363,15 @@ func (m logViewModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						break
 					}
 					if _, err := os.Stat(m.saveInput); err == nil {
-						// file exists — ask overwrite/append
+						// file exists — ask overwrite (and append, for logs)
 						m.saveConfirm = true
 					} else {
-						m.doSaveLog(false)
+						m.doSave(false)
 					}
 				}
 			case "y":
 				if m.saveConfirm {
-					m.doSaveLog(false)
+					m.doSave(false)
 					m.saveConfirm = false
 				} else if !m.saveDone {
 					m.saveInput += "y"
@@ -378,8 +379,11 @@ func (m logViewModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			case "a":
 				if m.saveConfirm {
-					m.doSaveLog(true)
-					m.saveConfirm = false
+					// Append is only supported when saving logs.
+					if m.saveTab == tabLogs {
+						m.doSave(true)
+						m.saveConfirm = false
+					}
 				} else if !m.saveDone {
 					m.saveInput += "a"
 					m.saveStatus = ""
@@ -405,15 +409,14 @@ func (m logViewModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, tea.Quit
 		case "s":
-			if m.state == lvStateReady && m.activeTab == tabLogs && m.selectedUUID != "" {
+			if m.state == lvStateReady && m.selectedUUID != "" {
 				node := m.selectedNode()
-				if node != nil {
-					if _, ok := m.logCache[node.UUID]; ok {
-						m.saveModal = true
-						m.saveInput = ""
-						m.saveStatus = ""
-						m.saveDone = false
-					}
+				if node != nil && m.hasSaveableContent(node) {
+					m.saveModal = true
+					m.saveTab = m.activeTab
+					m.saveInput = ""
+					m.saveStatus = ""
+					m.saveDone = false
 				}
 			}
 			return m, nil
@@ -873,7 +876,7 @@ func (m logViewModel) renderSplit(b *strings.Builder) {
 
 	// help line: left side is fixed, right side shows poll state / scroll %
 	helpLeft := "  ↑/↓ select · l/d/i/o/tab tab · pgup/pgdn scroll · r refresh · q quit"
-	if m.activeTab == tabLogs {
+	if m.activeTab == tabLogs || m.activeTab == tabInputs || m.activeTab == tabOutputs {
 		helpLeft = "  ↑/↓ select · l/d/i/o/tab tab · pgup/pgdn scroll · r refresh · s save · q quit"
 	}
 

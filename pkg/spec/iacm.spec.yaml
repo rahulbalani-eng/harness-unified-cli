@@ -4,7 +4,7 @@ module_desc: Infrastructure as Code Management (workspaces, resources)
 help_text: |
   ## Infrastructure as Code Management (iacm)
 
-  Harness IACM manages Terraform and OpenTofu infrastructure lifecycles. It tracks
+  Harness IACM manages Terraform, OpenTofu and AWS CDK infrastructure lifecycles. It tracks
   workspace state, runs plans and applies, and provides drift detection and cost
   estimation across your infrastructure.
 
@@ -13,6 +13,18 @@ help_text: |
   A workspace is the core unit — it maps to a Terraform workspace with a specific
   backend, variables, and state. Workspaces run operations (plan, apply, destroy)
   which produce execution logs and state snapshots.
+
+  ### State operations
+
+  Every command that runs inside a workspace takes `--workspace <id>`. When that
+  flag is omitted, the command reads `.harness/workspace.yaml` in the current
+  directory (`workspace_id`, and optional `org_id` / `project_id`).
+
+  `list state` and `get state` download the stored state file and read it in the CLI. Mutations run through the
+  workspace state pipeline: `delete state` (state rm), `create state` (import),
+  `move state` (state mv), and `replace_provider state` (state replace-provider).
+  `execute workspace` runs a remote plan. For awscdk workspaces, `synth
+  workspace` and `diff workspace` run the remote CDK synth and diff.
 
   ### Nouns
 
@@ -140,6 +152,21 @@ nouns:
       - id: updated
         expr: epochMs(it.updated)
 
+  - noun: state
+    short_desc: A resource tracked in an IACM workspace's Terraform/OpenTofu state.
+    noun_aliases: [states]
+    fields:
+      - id: address
+        expr: it.address
+      - id: type
+        expr: it.type
+      - id: provider
+        expr: it.provider
+      - id: module
+        expr: it.module
+      - id: mode
+        expr: it.mode
+
   - noun: provider
     short_desc: An IACM Terraform provider from the provider registry.
     noun_aliases: [providers]
@@ -211,25 +238,26 @@ commands:
     long: |
       Execute a remote Terraform plan on an IaCM workspace.
 
-      The workspace ID is optional. If omitted, the command reads it from
-      .harness/workspace.yaml in the current directory:
+      Pass the workspace with --workspace. If that flag is omitted, the command
+      reads .harness/workspace.yaml in the current directory:
 
         org_id:       <your-org>        # optional; overrides --org flag
         project_id:   <your-project>    # optional; overrides --project flag
-        workspace_id: <your-workspace>  # required if no ID is passed as an argument
+        workspace_id: <your-workspace>  # required if --workspace is omitted
 
       Examples:
-        harness execute workspace my-workspace              # explicit workspace ID
+        harness execute workspace --workspace my-workspace
         harness execute workspace                           # reads .harness/workspace.yaml
-        harness execute workspace --target aws_instance.web # limit plan to one resource
-        harness execute workspace --force                   # skip confirmation prompt
-    id_label: "<workspace-id>"
+        harness execute workspace --workspace my-workspace --target aws_instance.web
+        harness execute workspace --workspace my-workspace --force
     no_id: true
-    allows_id: true
-    completion_noun: workspace
+    id_resolve_fn: resolve_state_scope
     handler_type: workflow
     workflow_id: execute_workspace
     flags:
+      - name: workspace
+        description: Workspace identifier. Read from .harness/workspace.yaml when omitted.
+        completion_noun: workspace
       - name: target
         description: "Resource target (can be specified multiple times)"
         is_multi: true
@@ -238,6 +266,269 @@ commands:
         is_multi: true
       - name: force
         description: "Skip confirmation prompt"
+        is_bool: true
+      - name: follow
+        description: Stream the pipeline logs live; exits when the execution reaches a terminal state
+        is_bool: true
+      - name: ui
+        description: Open the interactive log viewer for the run (requires a TTY)
+        is_bool: true
+
+  - command: synth workspace
+    verb: synth
+    noun: workspace
+    short: Run a remote CDK synth on an awscdk workspace
+    long: |
+      Synthesize the CDK app remotely (cdk synth) on an awscdk IaCM workspace.
+
+      Uploads the local source to the workspace and runs the workspace's default
+      "synth" pipeline against it. node_modules and cdk.out are not uploaded.
+
+      Pass the workspace with --workspace. If that flag is omitted, the command
+      reads .harness/workspace.yaml in the current directory:
+
+        org_id:       <your-org>        # optional; overrides --org flag
+        project_id:   <your-project>    # optional; overrides --project flag
+        workspace_id: <your-workspace>  # required if --workspace is omitted
+
+      Examples:
+        harness synth workspace --workspace my-cdk-workspace
+        harness synth workspace                      # reads .harness/workspace.yaml
+        harness synth workspace --workspace my-cdk-workspace --follow
+    no_id: true
+    id_resolve_fn: resolve_state_scope
+    handler_type: workflow
+    workflow_id: execute_workspace_synth
+    flags:
+      - name: workspace
+        description: Workspace identifier. Read from .harness/workspace.yaml when omitted.
+        completion_noun: workspace
+      - name: force
+        description: "Skip confirmation prompt"
+        is_bool: true
+      - name: follow
+        description: Stream the pipeline logs live; exits when the execution reaches a terminal state
+        is_bool: true
+      - name: ui
+        description: Open the interactive log viewer for the run (requires a TTY)
+        is_bool: true
+
+  - command: diff workspace
+    verb: diff
+    noun: workspace
+    short: Run a remote CDK diff on an awscdk workspace
+    long: |
+      Show the CDK diff remotely (cdk diff) on an awscdk IaCM workspace.
+
+      Uploads the local source to the workspace and runs the workspace's default
+      "diff" pipeline against it. node_modules and cdk.out are not uploaded.
+
+      Pass the workspace with --workspace. If that flag is omitted, the command
+      reads .harness/workspace.yaml in the current directory:
+
+        org_id:       <your-org>        # optional; overrides --org flag
+        project_id:   <your-project>    # optional; overrides --project flag
+        workspace_id: <your-workspace>  # required if --workspace is omitted
+
+      Examples:
+        harness diff workspace --workspace my-cdk-workspace
+        harness diff workspace                      # reads .harness/workspace.yaml
+        harness diff workspace --workspace my-cdk-workspace --follow
+    no_id: true
+    id_resolve_fn: resolve_state_scope
+    handler_type: workflow
+    workflow_id: execute_workspace_diff
+    flags:
+      - name: workspace
+        description: Workspace identifier. Read from .harness/workspace.yaml when omitted.
+        completion_noun: workspace
+      - name: force
+        description: "Skip confirmation prompt"
+        is_bool: true
+      - name: follow
+        description: Stream the pipeline logs live; exits when the execution reaches a terminal state
+        is_bool: true
+      - name: ui
+        description: Open the interactive log viewer for the run (requires a TTY)
+        is_bool: true
+
+  # ── state ─────────────────────────────────────────────────────────────────────
+  - command: list state
+    verb: list
+    noun: state
+    short: List resources in a workspace's current Terraform/OpenTofu state
+    long: |
+      Lists resources from the latest state stored for the workspace. The CLI
+      downloads the state file and reads it locally; no pipeline runs and the
+      server does not parse it.
+
+      Pass --workspace, or omit it to read .harness/workspace.yaml.
+    id_resolve_fn: resolve_state_scope
+    handler_type: endpoint
+    flags:
+      - name: workspace
+        description: Workspace identifier. Read from .harness/workspace.yaml when omitted.
+        completion_noun: workspace
+      - name: search
+        description: Filter resources whose address contains this substring
+    endpoint:
+      fetch_fn: list_state_fetch
+      items_expr: it
+      get_id_expr: it["address"]
+      paging:
+        paging_strategy: flat_list
+      columns: [address, type, provider, module, mode]
+
+  - command: get state
+    verb: get
+    noun: state
+    short: "Show one resource from a workspace's current state: harness get state <address> --workspace <id>"
+    long: |
+      Shows a single resource from the latest state stored for the workspace,
+      with sensitive attribute values masked. The CLI downloads the state file
+      and reads it locally; no pipeline runs and the server does not parse it.
+      Pass --workspace, or omit it to read .harness/workspace.yaml.
+    id_label: "<address>"
+    id_allow_slash: true
+    id_resolve_fn: resolve_state_scope
+    handler_type: workflow
+    workflow_id: get_state
+    item_fn: get_state_item
+    flags:
+      - name: workspace
+        description: Workspace identifier. Read from .harness/workspace.yaml when omitted.
+        completion_noun: workspace
+
+  - command: move state
+    verb: move
+    noun: state
+    short: "Move a resource to a new address in a workspace's state: harness move state --workspace <id> --source <addr> --destination <addr>"
+    long: |
+      Runs 'state mv' on an IACM workspace through its "state" default pipeline
+      (workspace override, then project default, then an auto-generated one).
+
+      Pass --workspace, or omit it to read .harness/workspace.yaml.
+    no_id: true
+    id_resolve_fn: resolve_state_scope
+    handler_type: workflow
+    workflow_id: update_state_move
+    flags:
+      - name: workspace
+        description: Workspace identifier. Read from .harness/workspace.yaml when omitted.
+        completion_noun: workspace
+      - name: source
+        description: Current resource address
+        required: true
+      - name: destination
+        description: New resource address
+        required: true
+      - name: force
+        description: Skip confirmation prompt
+        is_bool: true
+      - name: follow
+        description: Stream the pipeline logs live; exits when the execution reaches a terminal state
+        is_bool: true
+      - name: ui
+        description: Open the interactive log viewer for the run (requires a TTY)
+        is_bool: true
+
+  - command: replace_provider state
+    verb: replace_provider
+    noun: state
+    short: "Replace a provider across a workspace's state: harness replace_provider state --workspace <id> --from <provider> --to <provider>"
+    long: |
+      Runs 'state replace-provider' on an IACM workspace through its "state"
+      default pipeline.
+
+      Pass --workspace, or omit it to read .harness/workspace.yaml.
+    no_id: true
+    id_resolve_fn: resolve_state_scope
+    handler_type: workflow
+    workflow_id: update_state_replace_provider
+    flags:
+      - name: workspace
+        description: Workspace identifier. Read from .harness/workspace.yaml when omitted.
+        completion_noun: workspace
+      - name: from
+        description: "Current provider source, e.g. registry.terraform.io/hashicorp/aws"
+        required: true
+      - name: to
+        description: "New provider source, e.g. registry.opentofu.org/hashicorp/aws"
+        required: true
+      - name: force
+        description: Skip confirmation prompt
+        is_bool: true
+      - name: follow
+        description: Stream the pipeline logs live; exits when the execution reaches a terminal state
+        is_bool: true
+      - name: ui
+        description: Open the interactive log viewer for the run (requires a TTY)
+        is_bool: true
+
+  - command: delete state
+    verb: delete
+    noun: state
+    short: "Remove one or more resources from a workspace's state: harness delete state --workspace <id> --address <addr> [--address ...]"
+    long: |
+      Runs 'state rm' on an IACM workspace through its "state" default pipeline.
+      The resource is untracked from state only - it is not destroyed in the
+      cloud provider.
+
+      Pass --workspace, or omit it to read .harness/workspace.yaml.
+    no_id: true
+    id_resolve_fn: resolve_state_scope
+    handler_type: workflow
+    workflow_id: delete_state
+    flags:
+      - name: workspace
+        description: Workspace identifier. Read from .harness/workspace.yaml when omitted.
+        completion_noun: workspace
+      - name: address
+        description: "Resource address to remove (can be specified multiple times)"
+        is_multi: true
+        required: true
+      - name: force
+        description: Skip confirmation prompt
+        is_bool: true
+      - name: follow
+        description: Stream the pipeline logs live; exits when the execution reaches a terminal state
+        is_bool: true
+      - name: ui
+        description: Open the interactive log viewer for the run (requires a TTY)
+        is_bool: true
+
+  - command: create state
+    verb: create
+    noun: state
+    short: "Import an existing cloud resource into a workspace's state: harness create state --workspace <id> --address <addr> --resource-id <id>"
+    long: |
+      Runs 'terraform import' on an IACM workspace through its "state" default
+      pipeline. The resource must already be declared in the workspace's
+      configuration at <address>.
+
+      Pass --workspace, or omit it to read .harness/workspace.yaml.
+    no_id: true
+    id_resolve_fn: resolve_state_scope
+    handler_type: workflow
+    workflow_id: create_state
+    flags:
+      - name: workspace
+        description: Workspace identifier. Read from .harness/workspace.yaml when omitted.
+        completion_noun: workspace
+      - name: address
+        description: Resource address to import into, e.g. aws_instance.web
+        required: true
+      - name: resource-id
+        description: Cloud provider identifier of the resource to import
+        required: true
+      - name: force
+        description: Skip confirmation prompt
+        is_bool: true
+      - name: follow
+        description: Stream the pipeline logs live; exits when the execution reaches a terminal state
+        is_bool: true
+      - name: ui
+        description: Open the interactive log viewer for the run (requires a TTY)
         is_bool: true
 
   # ── host (Ansible) ────────────────────────────────────────────────────────────

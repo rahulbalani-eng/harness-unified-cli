@@ -63,9 +63,11 @@ Operations that require client-side workflows and don't map to a single API call
 
 | Verb          | Noun       | Rationale                                                            |
 | ------------- | ---------- | -------------------------------------------------------------------- |
-| `push`        | `artifact` | Upload requires local archive parsing and streaming                  |
-| `pull`        | `artifact` | Download with streaming progress and destination resolution          |
-| `configure`   | `registry` | Local file system writes (`.npmrc` etc.) — no API call               |
+| `push`              | `artifact` | Upload requires local archive parsing and streaming                         |
+| `pull`              | `artifact` | Download with streaming progress and destination resolution                 |
+| `configure`         | `registry` | Local file system writes (`.npmrc` etc.) — no API call                      |
+| `move`              | `state`    | IACM state mv through the workspace state pipeline                          |
+| `replace_provider`  | `state`    | IACM state replace-provider through the workspace state pipeline            |
 
 ---
 

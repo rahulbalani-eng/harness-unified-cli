@@ -109,6 +109,38 @@ func executeWorkspaceHandler(ctx *cmdctx.Ctx) error {
 	return executePlan(bgCtx, ctx, hc, a, orgID, projectID, workspaceID, targets, replacements, force)
 }
 
+
+const resolveStateScopeID = "resolve_state_scope"
+
+// resolveStateScope fills --workspace from .harness/workspace.yaml when the
+// flag was omitted, and applies that file's org and project to the request.
+func resolveStateScope(ctx *cmdctx.Ctx) error {
+	if cmdctx.GetString(ctx.FlagValues, "workspace") != "" {
+		return nil
+	}
+	cfg, err := loadWorkspaceConfig()
+	if err != nil {
+		return err
+	}
+	if cfg.Workspace == "" {
+		return errors.New("workspace is required: pass --workspace <id> or set workspace_id in .harness/workspace.yaml")
+	}
+	if ctx.FlagValues == nil {
+		ctx.FlagValues = map[string]any{}
+	}
+	ctx.FlagValues["workspace"] = cfg.Workspace
+	if ctx.Auth != nil {
+		if cfg.Org != "" {
+			ctx.Auth.OrgID = cfg.Org
+		}
+		if cfg.Project != "" {
+			ctx.Auth.ProjectID = cfg.Project
+		}
+	}
+	fmt.Printf("Using workspace from .harness/workspace.yaml: %s\n", cfg.Workspace)
+	return nil
+}
+
 func loadWorkspaceConfig() (*workspaceConfig, error) {
 	wd, err := os.Getwd()
 	if err != nil {

@@ -629,6 +629,7 @@ type CommandSpec struct {
 	IdParts          int                 `yaml:"id_parts,omitempty"`          // when > 1, id must contain exactly (id_parts-1) "/" separators; parts available as {ctx:id_part:0}, {ctx:id_part:1}, ...
 	IdAllowSlash     bool                `yaml:"id_allow_slash,omitempty"`    // skip the slash-count validation on id (use when the id format has variable segments)
 	IdFormats        []string            `yaml:"id_formats,omitempty"`        // named accepted shapes of the positional id/scope (e.g. "<repo>/<branch...>"); exclusive with id_parts/id_allow_slash
+	IdResolveFn      string              `yaml:"id_resolve_fn,omitempty"`     // registered fn that fills a missing workspace id before the endpoint path is rendered
 	RequiresParentId bool                `yaml:"requires_parentid,omitempty"` // list commands only: makes the [parentid] arg mandatory
 	ParentIdLabel    string              `yaml:"parentid_label,omitempty"`    // overrides "[parentid]" in the Usage line for list commands (e.g. "<registry/name>")
 	Hidden           bool                `yaml:"hidden,omitempty"`

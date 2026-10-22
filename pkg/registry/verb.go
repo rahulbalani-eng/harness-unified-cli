@@ -32,6 +32,12 @@ const (
 	VerbConfigure = "configure"
 )
 
+// Module-approved verbs (IACM) — require client-side workflows, approved at framework level.
+const (
+	VerbMove            = "move"
+	VerbReplaceProvider = "replace_provider"
+)
+
 // Package manager verbs — install/uninstall for plugins, agents, mcp, and the CLI itself.
 const (
 	VerbInstall = "install"
@@ -74,16 +80,19 @@ type VerbSpec struct {
 var VerbOrder = []string{
 	VerbList, VerbGet, VerbCreate, VerbUpdate, VerbDelete, VerbExecute,
 	VerbInstall, VerbPush, VerbPull, VerbConfigure, VerbMigrate,
+	VerbMove, VerbReplaceProvider,
 }
 
 // verbRegistry is the authoritative table of every allowed verb.
 // To add a verb: add a const above and a row here.
 var verbRegistry = map[string]VerbSpec{
 	// Module-approved verbs
-	VerbPush:      {Kind: VerbKindCore, Gerund: "pushing", ShortDesc: "Push an artifact to a Harness registry", RequiresId: true},
-	VerbPull:      {Kind: VerbKindCore, Gerund: "pulling", ShortDesc: "Pull an artifact from a Harness registry", RequiresId: true},
-	VerbInstall:   {Kind: VerbKindCore, Gerund: "installing", ShortDesc: "Install a Harness component", AllowsId: true},
-	VerbConfigure: {Kind: VerbKindCore, Gerund: "configuring", ShortDesc: "Configure a local package manager client for a Harness registry", RequiresId: true},
+	VerbPush:            {Kind: VerbKindCore, Gerund: "pushing", ShortDesc: "Push an artifact to a Harness registry", RequiresId: true},
+	VerbPull:            {Kind: VerbKindCore, Gerund: "pulling", ShortDesc: "Pull an artifact from a Harness registry", RequiresId: true},
+	VerbInstall:         {Kind: VerbKindCore, Gerund: "installing", ShortDesc: "Install a Harness component", AllowsId: true},
+	VerbConfigure:       {Kind: VerbKindCore, Gerund: "configuring", ShortDesc: "Configure a local package manager client for a Harness registry", RequiresId: true},
+	VerbMove:            {Kind: VerbKindCore, Gerund: "moving", ShortDesc: "Move a resource address in an IACM workspace state", AllowsId: true},
+	VerbReplaceProvider: {Kind: VerbKindCore, Gerund: "replacing", ShortDesc: "Replace a provider source in an IACM workspace state", AllowsId: true},
 
 	// Pair verbs
 	VerbMigrate: {Kind: VerbKindCore, Gerund: "migrating", ShortDesc: "Migrate a resource between two endpoints", NounPair: true},

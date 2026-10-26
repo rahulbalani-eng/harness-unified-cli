@@ -358,9 +358,10 @@ commands:
     noun: state
     short: List resources in a workspace's current Terraform/OpenTofu state
     long: |
-      Lists resources from the latest state stored for the workspace. The CLI
-      downloads the state file and reads it locally; no pipeline runs and the
-      server does not parse it.
+      Lists resources from the workspace resource inventory. When the resources
+      table is enabled, that is the table updated after apply and state
+      operations. Otherwise the server reads the stored state snapshot.
+      No pipeline runs.
 
       Pass --workspace, or omit it to read .harness/workspace.yaml.
     id_resolve_fn: resolve_state_scope
@@ -384,9 +385,10 @@ commands:
     noun: state
     short: "Show one resource from a workspace's current state: harness get state <address> --workspace <id>"
     long: |
-      Shows a single resource from the latest state stored for the workspace,
-      with sensitive attribute values masked. The CLI downloads the state file
-      and reads it locally; no pipeline runs and the server does not parse it.
+      Shows a single resource from the workspace resource inventory, with
+      sensitive attribute values masked. When the resources table is enabled,
+      that is the table updated after apply and state operations. Otherwise
+      the server reads the stored state snapshot. No pipeline runs.
       Pass --workspace, or omit it to read .harness/workspace.yaml.
     id_label: "<address>"
     id_allow_slash: true

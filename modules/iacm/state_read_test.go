@@ -4,122 +4,89 @@
 package iacm
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
-// stateFile is `terraform show -json` output with a root resource, a data
-// source, a resource in a nested module, an indexed instance, a deposed
-// object, and sensitive attributes.
-const stateFile = `{
-  "format_version": "1.0",
-  "values": {
-    "root_module": {
-      "resources": [
-        {"address": "random_pet.demo", "mode": "managed", "type": "random_pet", "name": "demo",
-         "provider_name": "registry.terraform.io/hashicorp/random",
-         "values": {"id": "calm-fox", "length": 2},
-         "sensitive_values": {}},
-        {"address": "data.aws_caller_identity.me", "mode": "data", "type": "aws_caller_identity", "name": "me",
-         "provider_name": "registry.terraform.io/hashicorp/aws",
-         "values": {"account_id": "123"},
-         "sensitive_values": {}},
-        {"address": "aws_db_instance.db", "mode": "managed", "type": "aws_db_instance", "name": "db",
-         "provider_name": "registry.terraform.io/hashicorp/aws",
-         "values": {"name": "main", "password": "hunter2", "tags": {"env": "prod"}, "endpoint": "db.local"},
-         "sensitive_values": {"password": true, "tags": {"env": false}, "endpoint": false}},
-        {"address": "random_pet.demo", "deposed_key": "abc123", "mode": "managed", "type": "random_pet", "name": "demo",
-         "provider_name": "registry.terraform.io/hashicorp/random", "values": {"id": "old-fox"}}
-      ],
-      "child_modules": [
-        {"address": "module.net",
-         "resources": [
-           {"address": "module.net.aws_subnet.a[0]", "mode": "managed", "type": "aws_subnet", "name": "a", "index": 0,
-            "provider_name": "registry.terraform.io/hashicorp/aws", "values": {"cidr": "10.0.0.0/24"}, "sensitive_values": {}}
-         ],
-         "child_modules": [
-           {"address": "module.net.module.dns",
-            "resources": [
-              {"address": "module.net.module.dns.aws_route53_zone.z", "mode": "managed", "type": "aws_route53_zone", "name": "z",
-               "provider_name": "registry.terraform.io/hashicorp/aws", "values": {"name": "example.com"}, "sensitive_values": {}}
-            ]}
-         ]}
-      ]
-    }
-  }
-}`
-
-func TestParseStateEntries(t *testing.T) {
-	entries, err := parseStateEntries(strings.NewReader(stateFile))
-	require.NoError(t, err)
-
-	var addresses []string
-	for _, e := range entries {
-		addresses = append(addresses, e.res.Address)
+func TestTerraformAddress(t *testing.T) {
+	cases := []struct {
+		name string
+		res  workspaceResource
+		want string
+	}{
+		{
+			name: "root managed resource",
+			res:  workspaceResource{Mode: "managed", Module: "root", Type: "random_pet", Name: "demo"},
+			want: "random_pet.demo",
+		},
+		{
+			name: "root data source",
+			res:  workspaceResource{Mode: "data", Module: "root", Type: "aws_caller_identity", Name: "me"},
+			want: "data.aws_caller_identity.me",
+		},
+		{
+			name: "indexed resource in a module",
+			res:  workspaceResource{Mode: "managed", Module: "module.net", Type: "aws_subnet", Name: `a[0]`},
+			want: "module.net.aws_subnet.a[0]",
+		},
+		{
+			name: "resource in a nested module",
+			res:  workspaceResource{Mode: "managed", Module: "module.net.module.dns", Type: "aws_route53_zone", Name: "z"},
+			want: "module.net.module.dns.aws_route53_zone.z",
+		},
+		{
+			name: "empty module is root",
+			res:  workspaceResource{Mode: "managed", Type: "aws_instance", Name: "web"},
+			want: "aws_instance.web",
+		},
 	}
-	assert.Equal(t, []string{
-		"aws_db_instance.db",
-		"data.aws_caller_identity.me",
-		"module.net.aws_subnet.a[0]",
-		"module.net.module.dns.aws_route53_zone.z",
-		"random_pet.demo",
-	}, addresses, "sorted by address, with nested modules and data sources, and without the deposed object")
 
-	rows := map[string]map[string]any{}
-	for _, e := range entries {
-		rows[e.res.Address] = summaryRow(e)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, terraformAddress(tc.res))
+		})
 	}
+}
+
+func TestSummaryRowOmitsAttributes(t *testing.T) {
+	row := summaryRow(stateEntry{
+		address: "random_pet.demo",
+		res: workspaceResource{
+			Provider:   "registry.terraform.io/hashicorp/random",
+			Type:       "random_pet",
+			Name:       "demo",
+			Module:     "root",
+			Mode:       "managed",
+			Attributes: map[string]any{"id": "calm-fox"},
+		},
+	})
+
 	assert.Equal(t, map[string]any{
 		"address": "random_pet.demo", "type": "random_pet", "name": "demo",
 		"provider": "registry.terraform.io/hashicorp/random", "module": "root", "mode": "managed",
-	}, rows["random_pet.demo"])
-	assert.Equal(t, "data", rows["data.aws_caller_identity.me"]["mode"])
-	assert.Equal(t, "module.net", rows["module.net.aws_subnet.a[0]"]["module"])
-	assert.Equal(t, "module.net.module.dns", rows["module.net.module.dns.aws_route53_zone.z"]["module"])
-	assert.NotContains(t, rows["random_pet.demo"], "attributes", "list rows carry no attribute values")
-}
-
-func TestParseStateEntries_EmptyAndInvalid(t *testing.T) {
-	t.Run("a state with no values has no resources", func(t *testing.T) {
-		entries, err := parseStateEntries(strings.NewReader(`{"format_version":"1.0"}`))
-		require.NoError(t, err)
-		assert.Empty(t, entries)
-	})
-	t.Run("a file that is not JSON is an error", func(t *testing.T) {
-		_, err := parseStateEntries(strings.NewReader(`not json`))
-		assert.ErrorContains(t, err, "reading the state file")
-	})
+	}, row)
 }
 
 func TestDetailRowMasksSensitiveAttributes(t *testing.T) {
-	entries, err := parseStateEntries(strings.NewReader(stateFile))
-	require.NoError(t, err)
+	row := detailRow(stateEntry{
+		address: "aws_db_instance.db",
+		res: workspaceResource{
+			Type: "aws_db_instance",
+			Name: "db",
+			Attributes: map[string]any{
+				"name": "main", "password": "hunter2", "endpoint": "db.local",
+			},
+			SensitiveAttributes: []any{"password", 12, "missing"},
+		},
+	})
 
-	var db stateEntry
-	for _, e := range entries {
-		if e.res.Address == "aws_db_instance.db" {
-			db = e
-		}
-	}
-
-	attrs := detailRow(db)["attributes"].(map[string]any)
-
-	assert.Equal(t, sensitiveValuePlaceholder, attrs["password"], "a sensitive attribute is masked")
+	attrs := row["attributes"].(map[string]any)
+	assert.Equal(t, sensitiveValuePlaceholder, attrs["password"])
 	assert.Equal(t, "main", attrs["name"])
-	assert.Equal(t, "db.local", attrs["endpoint"], "an attribute marked false is shown")
-	assert.Equal(t, map[string]any{"env": "prod"}, attrs["tags"], "a nested marker with nothing sensitive shows the attribute")
-	assert.Equal(t, "hunter2", db.res.AttributeValues["password"], "the parsed state itself is not modified")
+	assert.Equal(t, "db.local", attrs["endpoint"])
 }
 
-func TestIsSensitiveMarker(t *testing.T) {
-	assert.True(t, isSensitiveMarker(true))
-	assert.False(t, isSensitiveMarker(false))
-	assert.False(t, isSensitiveMarker(nil))
-	assert.True(t, isSensitiveMarker(map[string]any{"a": false, "b": map[string]any{"c": true}}))
-	assert.False(t, isSensitiveMarker(map[string]any{"a": false}))
-	assert.True(t, isSensitiveMarker([]any{false, map[string]any{"x": true}}))
-	assert.False(t, isSensitiveMarker([]any{}))
+func TestMaskSensitiveAttributesEmpty(t *testing.T) {
+	assert.Nil(t, maskSensitiveAttributes(nil, []any{"password"}))
 }

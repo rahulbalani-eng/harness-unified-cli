@@ -5,16 +5,13 @@ package iacm
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"sort"
 	"strings"
 	"time"
 
-	"github.com/harness/cli/v3/pkg/auth"
 	"github.com/harness/cli/v3/pkg/cmdctx"
 	"github.com/harness/cli/v3/pkg/registry"
 	"github.com/harness/cli/v3/pkg/spec"
@@ -25,106 +22,78 @@ const (
 	getStateHandlerID  = "get_state"
 	getStateItemFnID   = "get_state_item"
 
-	// sensitiveValuePlaceholder replaces any attribute Terraform marks
-	// sensitive. The state file carries the real value, so masking happens
-	// here, before anything is printed.
+	// sensitiveValuePlaceholder replaces any attribute the resources table
+	// marks sensitive, before anything is printed.
 	sensitiveValuePlaceholder = "(sensitive value)"
 )
 
-// ---- state file shape ----
-//
-// The workspace's latest state is stored as `terraform show -json` output
-// (https://developer.hashicorp.com/terraform/internals/json-format). Only the
-// fields list and get need are decoded.
-
-type tfState struct {
-	Values *struct {
-		RootModule *tfModule `json:"root_module"`
-	} `json:"values"`
+// workspaceResource is one row from list resources. Managed resources and
+// data sources share this shape; outputs are a different array and are not
+// listed here.
+type workspaceResource struct {
+	Provider            string         `json:"provider"`
+	Type                string         `json:"type"`
+	Name                string         `json:"name"`
+	Module              string         `json:"module"`
+	Mode                string         `json:"mode"`
+	Attributes          map[string]any `json:"attributes"`
+	SensitiveAttributes []any          `json:"sensitive_attributes"`
 }
 
-type tfModule struct {
-	Address      string       `json:"address"`
-	Resources    []tfResource `json:"resources"`
-	ChildModules []*tfModule  `json:"child_modules"`
+// resourcesList is the list-resources response. The server reads the
+// resources table when IACM_USE_NEW_RESOURCES_TABLE is on, and the stored
+// state snapshot otherwise.
+type resourcesList struct {
+	Resources   []workspaceResource `json:"resources"`
+	DataSources []workspaceResource `json:"data_sources"`
 }
 
-type tfResource struct {
-	Address         string         `json:"address"`
-	Mode            string         `json:"mode"`
-	Type            string         `json:"type"`
-	Name            string         `json:"name"`
-	ProviderName    string         `json:"provider_name"`
-	DeposedKey      string         `json:"deposed_key"`
-	AttributeValues map[string]any `json:"values"`
-	SensitiveValues map[string]any `json:"sensitive_values"`
-}
-
-// stateEntry is one resource of the state, with its module path.
+// stateEntry is one listed resource with the Terraform address rebuilt from
+// its module, mode, type, and name. The resources table does not store the
+// address itself.
 type stateEntry struct {
-	res    tfResource
-	module string
+	res     workspaceResource
+	address string
 }
 
-// parseStateEntries decodes a state file and returns its resources, data
-// sources included, sorted by address. A deposed object is the old copy kept
-// while a replacement is created, so it is not listed.
-func parseStateEntries(r io.Reader) ([]stateEntry, error) {
-	var st tfState
-	if err := json.NewDecoder(r).Decode(&st); err != nil {
-		return nil, fmt.Errorf("reading the state file: %w", err)
+// terraformAddress rebuilds the address Terraform prints. A data source is
+// prefixed with "data.", and a non-root module is prefixed with its path.
+// The stored name already includes a count or for_each index.
+func terraformAddress(res workspaceResource) string {
+	local := res.Type + "." + res.Name
+	if res.Mode == "data" {
+		local = "data." + local
 	}
-	if st.Values == nil || st.Values.RootModule == nil {
-		return nil, nil
+	if res.Module == "" || res.Module == "root" {
+		return local
 	}
-
-	var entries []stateEntry
-	var walk func(m *tfModule)
-	walk = func(m *tfModule) {
-		module := m.Address
-		if module == "" {
-			module = "root"
-		}
-		for _, res := range m.Resources {
-			if res.DeposedKey != "" {
-				continue
-			}
-			entries = append(entries, stateEntry{res: res, module: module})
-		}
-		for _, child := range m.ChildModules {
-			walk(child)
-		}
-	}
-	walk(st.Values.RootModule)
-
-	sort.Slice(entries, func(i, j int) bool { return entries[i].res.Address < entries[j].res.Address })
-	return entries, nil
+	return res.Module + "." + local
 }
 
 // summaryRow is the row `list state` shows. Attributes are not included.
 func summaryRow(e stateEntry) map[string]any {
 	return map[string]any{
-		"address":  e.res.Address,
+		"address":  e.address,
 		"type":     e.res.Type,
 		"name":     e.res.Name,
-		"provider": e.res.ProviderName,
-		"module":   e.module,
+		"provider": e.res.Provider,
+		"module":   e.res.Module,
 		"mode":     e.res.Mode,
 	}
 }
 
-// detailRow is the item `get state` shows: the summary plus the attributes
+// detailRow is the item `get state` shows: the summary plus the attributes,
 // with every sensitive one masked.
 func detailRow(e stateEntry) map[string]any {
 	row := summaryRow(e)
-	row["attributes"] = maskSensitiveAttributes(e.res.AttributeValues, e.res.SensitiveValues)
+	row["attributes"] = maskSensitiveAttributes(e.res.Attributes, e.res.SensitiveAttributes)
 	return row
 }
 
-// maskSensitiveAttributes replaces each attribute Terraform marks sensitive
-// with a fixed placeholder. A nested sensitive value masks the whole
-// top-level attribute.
-func maskSensitiveAttributes(attributes, sensitive map[string]any) map[string]any {
+// maskSensitiveAttributes replaces each attribute named in sensitive with a
+// fixed placeholder. The resources table records those names as a list of
+// top-level keys.
+func maskSensitiveAttributes(attributes map[string]any, sensitive []any) map[string]any {
 	if len(attributes) == 0 {
 		return attributes
 	}
@@ -132,99 +101,45 @@ func maskSensitiveAttributes(attributes, sensitive map[string]any) map[string]an
 	for k, v := range attributes {
 		masked[k] = v
 	}
-	for key, marker := range sensitive {
-		if _, exists := masked[key]; !exists {
+	for _, key := range sensitive {
+		name, ok := key.(string)
+		if !ok {
 			continue
 		}
-		if isSensitiveMarker(marker) {
-			masked[key] = sensitiveValuePlaceholder
+		if _, exists := masked[name]; exists {
+			masked[name] = sensitiveValuePlaceholder
 		}
 	}
 	return masked
 }
 
-// isSensitiveMarker reports whether a sensitive_values entry marks anything
-// sensitive: true, or a non-empty object or list that does.
-func isSensitiveMarker(marker any) bool {
-	switch v := marker.(type) {
-	case bool:
-		return v
-	case map[string]any:
-		for _, inner := range v {
-			if isSensitiveMarker(inner) {
-				return true
-			}
-		}
-	case []any:
-		for _, inner := range v {
-			if isSensitiveMarker(inner) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-// ---- reading the file ----
-
-// loadStateEntries reads the workspace's latest state through two existing
-// APIs: the workspace record, which names the stored state file, and the
-// workspace data endpoint, which streams it. Nothing is parsed server-side.
-// A workspace that has never been applied has no state and returns nil.
+// loadStateEntries lists the workspace's resources. Both `list state` and
+// `get state` read this response instead of downloading the state file.
 func loadStateEntries(ctx *cmdctx.Ctx) ([]stateEntry, error) {
 	workspaceID, orgID, projectID, err := resolveStateWorkspace(ctx)
 	if err != nil {
 		return nil, err
 	}
-	a := ctx.Auth
 	reqCtx := ctx.Context
 	if reqCtx == nil {
 		reqCtx = context.Background()
 	}
 
-	ws, err := getWorkspace(reqCtx, &http.Client{Timeout: 60 * time.Second}, a, orgID, projectID, workspaceID)
-	if err != nil {
-		return nil, fmt.Errorf("fetching workspace: %w", err)
-	}
-	if ws.TerraformStateJSON == "" {
-		return nil, nil
+	path := fmt.Sprintf("/gateway/iacm/api/orgs/%s/projects/%s/workspaces/%s/resources", orgID, projectID, workspaceID)
+	var listed resourcesList
+	if err := doIACM(reqCtx, &http.Client{Timeout: 60 * time.Second}, ctx.Auth, http.MethodGet, path, nil, &listed); err != nil {
+		return nil, fmt.Errorf("listing workspace resources: %w", err)
 	}
 
-	path := fmt.Sprintf("/gateway/iacm/api/orgs/%s/projects/%s/workspaces/%s/data/%s", orgID, projectID, workspaceID, ws.TerraformStateJSON)
-	body, err := streamIACM(reqCtx, a, path)
-	if err != nil {
-		return nil, fmt.Errorf("downloading the state file: %w", err)
+	entries := make([]stateEntry, 0, len(listed.Resources)+len(listed.DataSources))
+	for _, res := range listed.Resources {
+		entries = append(entries, stateEntry{res: res, address: terraformAddress(res)})
 	}
-	defer body.Close()
-
-	return parseStateEntries(body)
-}
-
-// streamIACM returns the response body of an authenticated GET for the caller
-// to read as it arrives. A state file can be large, so there is no overall
-// request timeout; the caller's context bounds it.
-func streamIACM(ctx context.Context, a *auth.ResolvedAuth, path string) (io.ReadCloser, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiURL(a, path), nil)
-	if err != nil {
-		return nil, err
+	for _, res := range listed.DataSources {
+		entries = append(entries, stateEntry{res: res, address: terraformAddress(res)})
 	}
-	req.Header.Set("x-api-key", a.PATToken)
-	req.Header.Set("harness-account", a.AccountID)
-
-	resp, err := (&http.Client{}).Do(req)
-	if err != nil {
-		return nil, err
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		defer resp.Body.Close()
-		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-		var apiErr iacmAPIError
-		if json.Unmarshal(respBody, &apiErr) == nil && apiErr.Message != "" {
-			return nil, fmt.Errorf("API error %d: %s", resp.StatusCode, apiErr.Message)
-		}
-		return nil, fmt.Errorf("API error %d: %s", resp.StatusCode, string(respBody))
-	}
-	return resp.Body, nil
+	sort.Slice(entries, func(i, j int) bool { return entries[i].address < entries[j].address })
+	return entries, nil
 }
 
 // ---- list state ----
@@ -240,7 +155,7 @@ func listStateFetchFn(ctx *cmdctx.Ctx, _ *spec.EndpointSpec, _, _ int, _ any) (*
 	search := cmdctx.GetString(ctx.FlagValues, "search")
 	rows := make([]any, 0, len(entries))
 	for _, e := range entries {
-		if search != "" && !strings.Contains(e.res.Address, search) {
+		if search != "" && !strings.Contains(e.address, search) {
 			continue
 		}
 		rows = append(rows, summaryRow(e))
@@ -268,7 +183,7 @@ func getStateItemFn(ctx *cmdctx.Ctx) (any, error) {
 		return nil, err
 	}
 	for _, e := range entries {
-		if e.res.Address == address {
+		if e.address == address {
 			return detailRow(e), nil
 		}
 	}

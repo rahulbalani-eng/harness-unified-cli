@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"net/url"
 	"os"
 	"os/signal"
 	"strings"
@@ -35,14 +34,6 @@ type stateOperationExecution struct {
 	PipelineIdentifier   string `json:"pipeline_identifier"`
 	PipelineExecutionID  string `json:"pipeline_execution_id"`
 	PipelineExecutionURL string `json:"pipeline_execution_url"`
-}
-
-type stateResourceSummary struct {
-	Address  string `json:"address"`
-	Type     string `json:"type"`
-	Provider string `json:"provider"`
-	Module   string `json:"module"`
-	Mode     string `json:"mode"`
 }
 
 // ---- handlers ----
@@ -142,7 +133,7 @@ func runStateOperation(ctx *cmdctx.Ctx, req stateOperationRequest) error {
 	hc := &http.Client{Timeout: 60 * time.Second}
 
 	if len(req.previewAddresses) > 0 {
-		if err := previewStateAddresses(bgCtx, hc, a, orgID, projectID, workspaceID, req.previewAddresses); err != nil {
+		if err := previewStateAddresses(ctx, req.previewAddresses); err != nil {
 			return err
 		}
 	}
@@ -218,20 +209,24 @@ func resolveStateWorkspace(ctx *cmdctx.Ctx) (workspaceID, orgID, projectID strin
 
 // ---- API helpers ----
 
-func previewStateAddresses(ctx context.Context, hc *http.Client, a *auth.ResolvedAuth, org, project, workspaceID string, addresses []string) error {
+// previewStateAddresses prints the resources a move or remove will touch.
+// It reads the same workspace resources list as list state and get state.
+func previewStateAddresses(ctx *cmdctx.Ctx, addresses []string) error {
+	entries, err := loadStateEntries(ctx)
+	if err != nil {
+		return fmt.Errorf("checking current state: %w", err)
+	}
 	for _, addr := range addresses {
-		path := fmt.Sprintf("/gateway/iacm/api/orgs/%s/projects/%s/workspaces/%s/state?search=%s",
-			org, project, workspaceID, url.QueryEscape(addr))
-		var resources []stateResourceSummary
-		if err := doIACM(ctx, hc, a, "GET", path, nil, &resources); err != nil {
-			return fmt.Errorf("checking current state for %s: %w", addr, err)
+		found := false
+		for _, e := range entries {
+			if !strings.Contains(e.address, addr) {
+				continue
+			}
+			found = true
+			fmt.Printf("  %s (%s)\n", e.address, e.res.Type)
 		}
-		if len(resources) == 0 {
+		if !found {
 			fmt.Printf("warning: no resource matching %q found in the current state\n", addr)
-			continue
-		}
-		for _, r := range resources {
-			fmt.Printf("  %s (%s)\n", r.Address, r.Type)
 		}
 	}
 	return nil
